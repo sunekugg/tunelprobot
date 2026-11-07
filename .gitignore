@@ -1,0 +1,22 @@
+# Secrets & config lokal (jangan pernah commit)
+.env
+config.env
+*.env.local
+*.db
+*.db-journal
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+
+# Backup lokal
+*.tar.gz
+backups/

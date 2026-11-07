@@ -1,0 +1,5 @@
+Selamat datang, {nama}!
+Waktu server : {waktu_server}
+Batas buat akun : {batas_buat_akun}
+Masa aktif akun : {masa_aktif}
+Limit IP : {limit_ip}
