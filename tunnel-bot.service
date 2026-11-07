@@ -1,0 +1,15 @@
+[Unit]
+Description=Tunnel Management Bot (tunnel-bot)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/tunnel-bot/.venv/bin/python -m bot.main
+WorkingDirectory=/opt/tunnel-bot
+Restart=always
+RestartSec=5
+Environment=TZ=Asia/Jakarta
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

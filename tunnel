@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# CLI kontrol penuh tunnel-bot dari SSH.
+# Mode interaktif:  tunnel
+# Mode langsung:    tunnel <perintah>
+set -euo pipefail
+
+DATA_DIR="/etc/tunnel-bot"
+REPO_ROOT="/opt/tunnel-bot"
+SERVICE="tunnel-bot"
+LOG_BOT="/var/log/tunnel-bot.log"
+LOG_INSTALL="/var/log/tunnel-bot-install.log"
+
+require_service() {
+  if ! systemctl is-active --quiet "$SERVICE"; then
+    echo "Service $SERVICE tidak berjalan."
+    exit 1
+  fi
+}
+
+confirm_danger() {
+  # confirm <label>  -> butuh ketik ulang label
+  local label="$1" got=""
+  read -rp "⚠️ Ketik '$label' untuk konfirmasi: " got
+  if [ "$got" != "$label" ]; then
+    echo "Konfirmasi gagal. Tidak ada yang diubah."
+    return 1
+  fi
+  return 0
+}
+
+cmd_status() {
+  echo "== Status service =="
+  systemctl --no-pager is-active "$SERVICE" 2>/dev/null | sed 's/^/tunnel-bot: /' || true
+  for s in ssh dropbear nginx stunnel4 xray; do
+    local st
+    st=$(systemctl is-active "$s" 2>/dev/null || true)
+    [ -z "$st" ] && st="n/a"
+    echo "  $s: $st"
+  done
+  echo
+  echo "== Port yang dipakai (ss) =="
+  ss -lntup 2>/dev/null | awk 'NR==1 || /LISTEN/' || true
+  echo
+  echo "== Zona waktu =="
+  timedatectl show -p Timezone --value 2>/dev/null || date '+%Z %z'
+  echo
+  echo "== Conntrack =="
+  local max=0
+  max=$(cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null || echo 0)
+  echo "  nf_conntrack_max = $max"
+  if [ "$max" -eq 0 ]; then
+    echo "  tidak dapat membaca conntrack (mungkin kernel tanpa netfilter)"
+  elif [ "$max" -lt 65536 ]; then
+    echo "  ⚠️ DI BAWAH 65536 — naikkan (lihat /etc/sysctl.d/99-conntrack.conf)"
+  else
+    echo "  OK (>= 65536)"
+  fi
+}
+
+cmd_restart() { require_service; systemctl restart "$SERVICE" && echo "✅ tunnel-bot di-restart"; }
+cmd_log() { tail -n 40 "${1:-$LOG_BOT}" 2>/dev/null || tail -n 40 "$LOG_INSTALL"; }
+cmd_backup() {
+  local ts; ts="$(date '+%Y%m%d-%H%M%S')"
+  local out="$DATA_DIR/backup-$ts.tar.gz"
+  tar -czf "$out" -C "$DATA_DIR" data.db config.env 2>/dev/null
+  echo "✅ Backup: $out"
+  echo "$out" >> "$DATA_DIR/backups.log"
+}
+cmd_cek_port() {
+  echo "== Cek kepemilikan / konflik port =="
+  ss -lntup 2>/dev/null
+}
+cmd_help() {
+  cat <<'EOF'
+Perintah tunnel:
+  status        status service, port, zona waktu, conntrack
+  restart       restart bot
+  update        update dari GitHub (dengan konfirmasi)
+  backup        buat backup data
+  restore       restore dari backup (dengan konfirmasi)
+  log [file]    lihat log bot / instalasi
+  domain        ganti domain (dengan konfirmasi)
+  komponen      pasang / cek komponen
+  vps-tambah    tambah VPS lain
+  cek-port      cek kepemilikan & konflik port
+  uninstall     hapus bot (wajib ketik nama domain)
+EOF
+}
+
+cmd_update() {
+  echo "== Update tunnel-bot =="
+  git -C "$REPO_ROOT" fetch origin
+  local cur new
+  cur="$(cat "$REPO_ROOT/VERSION")"
+  new="$(git -C "$REPO_ROOT" show origin/main:VERSION 2>/dev/null || echo "$cur")"
+  echo "Versi sekarang: $cur | Versi remote: $new"
+  if [ "$cur" = "$new" ]; then echo "Sudah terbaru."; return 0; fi
+  echo "Changelog (terakhir):"
+  git -C "$REPO_ROOT" log --oneline "$cur..origin/main" 2>/dev/null | head -10 || true
+  confirm_danger "UPDATE" || return 1
+  cmd_backup
+  git -C "$REPO_ROOT" checkout main
+  git -C "$REPO_ROOT" pull origin main
+  systemctl restart "$SERVICE"
+  echo "✅ Update selesai, versi: $(cat "$REPO_ROOT/VERSION")"
+}
+
+cmd_restore() {
+  local latest
+  latest="$(tail -n1 "$DATA_DIR/backups.log" 2>/dev/null || true)"
+  [ -n "$latest" ] || { echo "Tidak ada backup."; exit 1; }
+  echo "Backup terakhir: $latest"
+  confirm_danger "RESTORE" || exit 1
+  tar -xzf "$latest" -C "$DATA_DIR" 2>/dev/null
+  systemctl restart "$SERVICE"
+  echo "✅ Restore dari '$latest'."
+}
+
+cmd_domain() {
+  echo "Ganti domain. Domain lama: $(grep '^DOMAIN=' "$DATA_DIR/config.env" | cut -d= -f2)"
+  read -rp "Domain baru: " new_domain
+  [ -n "$new_domain" ] || { echo "Kosong."; exit 1; }
+  confirm_danger "$new_domain" && bash "$REPO_ROOT/scripts/domain.sh" "$new_domain"
+}
+
+cmd_uninstall() {
+  local domain
+  domain="$(grep '^DOMAIN=' "$DATA_DIR/config.env" | cut -d= -f2)"
+  echo "⚠️ Hapus SELURUH tunnel-bot di server ini. Data akan hilang."
+  confirm_danger "$domain" || exit 1
+  systemctl stop "$SERVICE" 2>/dev/null
+  systemctl disable "$SERVICE" 2>/dev/null
+  rm -f /etc/systemd/system/tunnel-bot.service
+  systemctl daemon-reload
+  rm -rf "$REPO_ROOT" "$DATA_DIR"
+  echo "✅ tunnel-bot dihapus."
+}
+
+main() {
+  local cmd="${1:-}"
+  if [ -z "$cmd" ]; then
+    # mode interaktif
+    while true; do
+      echo "== tunnel-bot =="
+      cmd_help
+      printf '> '
+      read -r c || break
+      [ -z "$c" ] && continue
+      [ "$c" = "exit" ] || [ "$c" = "quit" ] && break
+      main "$c"
+    done
+    return
+  fi
+  case "$cmd" in
+    status) cmd_status ;;
+    restart) cmd_restart ;;
+    update) cmd_update ;;
+    backup) cmd_backup ;;
+    restore) cmd_restore ;;
+    log) shift; cmd_log "${1:-}" ;;
+    domain) cmd_domain ;;
+    komponen) bash "$REPO_ROOT/scripts/components.sh" ;;
+    cek-port) cmd_cek_port ;;
+    uninstall) cmd_uninstall ;;
+    help|-h|--help) cmd_help ;;
+    *) echo "Perintah tidak dikenal: $cmd"; cmd_help; exit 1 ;;
+  esac
+}
+
+main "$@"
