@@ -65,7 +65,7 @@ check_stunnel
 # Cek port konflik untuk komponen yang akan dibuka oleh bot.
 log "=== Cek port penting (harus bebas / milik bot) ==="
 for p in 90 444 8080 8443 2082 2083 2052 2053 8880; do
-  if ss -lntu | awk '{print $4}' | grep -q ":${p}\$"; then
+  if ss -lntu 2>/dev/null | grep -oE ":[0-9]+" | grep -qE ":${p}\$"; then
     log "⚠️ port $p SUDAH DIPAKAI service lain — jangan dibuka ulang tanpa keputusan."
   else
     log "port $p bebas."

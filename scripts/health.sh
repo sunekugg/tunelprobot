@@ -30,7 +30,7 @@ fi
 
 # Laporkan port penting milik bot (daftar blueprint §4) apakah terbuka.
 for p in 90 444 8080 8443 2082 2083 2052 2053 8880 9080 9088; do
-  if ss -lntu | awk '{print $4}' | grep -q ":${p}\$"; then
+  if ss -lntu 2>/dev/null | grep -oE ":[0-9]+" | grep -qE ":${p}\$"; then
     log "port $p: TERBUKA."
   fi
 done
