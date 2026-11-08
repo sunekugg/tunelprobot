@@ -118,7 +118,7 @@ def system_user_exists(username: str) -> bool:
 def create_os_ssh_user(username: str, password: str) -> bool:
     try:
         if not system_user_exists(username):
-            subprocess.run(["useradd", "-M", "-s", "/bin/false", username], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+            r = subprocess.run(["useradd", "-M", "-s", "/bin/false", username], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
         proc = subprocess.Popen(["chpasswd"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         proc.communicate(input=f"{username}:{password}\n".encode("utf-8"), timeout=10)
         subprocess.run(["usermod", "-U", "-e", "", username], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
@@ -126,7 +126,10 @@ def create_os_ssh_user(username: str, password: str) -> bool:
             logging.error("create_os_ssh_user: chpasswd returncode %s utk user %s", proc.returncode, username)
         return proc.returncode == 0
     except Exception as e:
-        logging.error("create_os_ssh_user EXC utk %s: %s", username, e)
+        stderr = ""
+        if hasattr(e, "stderr") and isinstance(getattr(e, "stderr"), bytes):
+            stderr = e.stderr.decode("utf-8", "ignore")[:200]
+        logging.error("create_os_ssh_user EXC utk %s: %s | stderr=%s", username, e, stderr)
         return False
 
 def lock_os_ssh_user(username: str, lock: bool = True, password: str = ""):
