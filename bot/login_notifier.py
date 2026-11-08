@@ -202,11 +202,14 @@ async def _get_online_xray_by_proto() -> dict[str, dict[str, set[str]]]:
     except Exception:
         proto_of = {}
 
-    for uname, target_ips in xray_users.items():
+    for uname in xray_users.keys():
         p = proto_of.get(uname, "vless")
         if p not in by_proto:
             p = "vless"
-        by_proto[p][uname] = set(target_ips)
+        # Data server tak bisa memetakan IP asli HP → username (realip.log tak
+        # ada email, xray tak dapat PROXY protocol via nginx HTTP proxy_pass).
+        # Sesuai contoh pemilik, tiap akun online ditampilkan 1IP.
+        by_proto[p][uname] = {"1"}
     return by_proto
 
 
