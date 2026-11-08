@@ -1512,14 +1512,16 @@ def get_haproxy_client_ips(window_seconds: int = 120) -> dict[str, set[str]]:
             lines = f.read().decode("utf-8", errors="ignore").splitlines()[-3000:]
         for ln in lines:
             # '<ip> [08/Nov/2026:22:12:13 +0700] "GET /trojan HTTP/1.1" 404 UA'
-            # Saring:
-            #   - status 101 (WebSocket VPN sukses)
-            #   - UA BUKAN bot/scanner (Go-http-client test internal,
-            #     Infrawatch/Claude-SearchBot/client dll)
-            if '" 101 ' not in ln:
+            # Ambil request endpoint VPN (/trojan|/vless|/vmess) — status apa pun.
+            # WebSocket connect 101 cuma sekali; request berikutnya (health-check,
+            # latency probe) tetap nulis log → IP asli user selalu terlihat.
+            m_req = re.search(r'"(?:GET|POST|PUT|ACL) ([^ "]+) HTTP', ln)
+            if not m_req:
                 continue
-            m_ua = re.search(r'HTTP/\d+\.\d+" \d{3} (.*)$', ln)
-            ua = m_ua.group(1) if m_ua else ""
+            path = m_req.group(1)
+            if not re.search(r"/(trojan|vless|vmess|whatever|uptrojan|upvless|upvmess)", path):
+                continue
+            ua = ln.split('" "')[-1] if '" "' in ln else ln.split("HTTP/")[-1] if "HTTP/" in ln else ""
             if re.search(r"(Go-http-client|Infrawatch|SearchBot|scanner|bot|crawler|Spider|curl)", ua, re.I):
                 continue
             m_time = re.search(r"\[(\d{2})/(\w{3})/(\d{4}):(\d{2}):(\d{2}):(\d{2}) [+-]\d{4}\]", ln)
