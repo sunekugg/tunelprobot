@@ -1336,8 +1336,29 @@ def get_cluster_node_stats(server_id: int) -> dict:
 _SYS_USERS = {"root", "sshd", "dropbear", "nobody", "daemon", "www-data"}
 
 def _read_dropbear_auth_map() -> dict[str, tuple[str, str]]:
-    """Baca auth.log/syslog → {pid_dropbear: (user, remote_ip)} dari 'Password auth succeeded'."""
+    """Baca log dropbear (journal + auth.log/syslog fallback) → {pid_dropbear: (user, remote_ip)}.
+
+    Format journal: 'dropbear[168568]: [168568] Nov 09 05:16:40 Password auth succeeded for 'user' from 1.2.3.4:5678'
+    (ada timestamp & PID ganda). Pola: dropbear\\[(\\d+)\\]: .*Password auth succeeded for '([^']+)' from (\\S+)$
+    """
     pid_map: dict[str, tuple[str, str]] = {}
+    # Sumber 1: journalctl -u dropbear (dropbear unit log ke journal, bukan auth.log)
+    try:
+        out = subprocess.check_output(
+            ["journalctl", "-u", "dropbear", "-n", "300", "--no-pager", "-o", "cat"],
+            text=True, stderr=subprocess.DEVNULL, timeout=5,
+        )
+        for ln in out.splitlines():
+            m = re.search(
+                r"dropbear\[(\d+)\]:\s.*Password auth succeeded for '([^']+)' from (\S+?)(?::(\d+))?\s*$",
+                ln,
+            )
+            if m:
+                ip = m.group(3).strip("[]")
+                pid_map[m.group(1)] = (m.group(2), ip)
+    except Exception:
+        pass
+    # Sumber 2 (fallback): auth.log / syslog
     for log_p in ("/var/log/auth.log", "/var/log/syslog"):
         if not os.path.exists(log_p):
             continue
@@ -1351,11 +1372,12 @@ def _read_dropbear_auth_map() -> dict[str, tuple[str, str]]:
                 if "dropbear[" not in ln:
                     continue
                 m = re.search(
-                    r"dropbear\[(\d+)\]:\s*Password auth succeeded for '([^']+)' from ([0-9a-fA-F\.:]+):",
+                    r"dropbear\[(\d+)\]:\s.*Password auth succeeded for '([^']+)' from (\S+?)(?::(\d+))?\s*$",
                     ln,
                 )
                 if m:
-                    pid_map[m.group(1)] = (m.group(2), m.group(3).strip("[]"))
+                    ip = m.group(3).strip("[]")
+                    pid_map[m.group(1)] = (m.group(2), ip)
         except Exception:
             pass
     return pid_map
