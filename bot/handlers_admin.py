@@ -1296,6 +1296,7 @@ async def cb_adm_settings(call: CallbackQuery):
         [InlineKeyboardButton(text="📊 Kuota BW Default (GB)", callback_data="adm_set_key:default_quota_gb"), InlineKeyboardButton(text="⚡ Speed Default (Mbps)", callback_data="adm_set_key:default_speed_mbps")],
         [InlineKeyboardButton(text="🔢 Limit IP Global", callback_data="adm_set_glim"), InlineKeyboardButton(text="🖼 Banner SSH (Auto-Sync)", callback_data="adm_set_key:ssh_banner")],
         [InlineKeyboardButton(text="🔔 Notifikasi Grup Topic (ON/OFF)", callback_data="adm_topic_notif")],
+        [InlineKeyboardButton(text="📡 Notif Login & Report Online", callback_data="adm_login_notif")],
         [InlineKeyboardButton(text="🎯 Preset Bug ISP", callback_data="adm_bug_presets"), InlineKeyboardButton(text="👋 Teks Welcome", callback_data="adm_set_key:welcome_text")],
         [InlineKeyboardButton(text="⬅️ Kembali", callback_data="admin_panel")]
     ])
@@ -1618,6 +1619,91 @@ async def cb_adm_topic_test(call: CallbackQuery):
     )
     await set_setting("notif_topic_enabled", prev_en)
     await call.answer("✅ Pesan tes telah dikirim ke Topic Grup! Silakan cek grup Anda.", show_alert=True)
+
+# === FITUR NOTIFIKASI LOGIN & REPORT ONLINE (DUA FITUR TERPISAH) ===
+@router.callback_query(F.data == "adm_login_notif")
+async def cb_adm_login_notif(call: CallbackQuery):
+    if not await _guard_admin(call):
+        return
+    en_login = (await get_setting("login_notif_enabled")) == "1"
+    interval = int(await get_setting("login_notif_interval_min") or "0")
+    show_ip = (await get_setting("show_ip_in_notif")) == "1"
+
+    st_login = "🟢 AKTIF" if en_login else "🔴 NONAKTIF"
+    tog_login = "🔴 Matikan Notif Login" if en_login else "🟢 Hidupkan Notif Login"
+    st_report = f"🟢 {interval} Menit" if interval > 0 else "🔴 NONAKTIF"
+    tog_ip = "🙈 Sembunyikan IP" if show_ip else "👁 Tampilkan IP"
+
+    text = (
+        "📡 <b>Notifikasi Login &amp; Report Online</b>\n\n"
+        "<b>1) Notifikasi Login</b> — kirim pesan ke topic <i>setiap ada user login</i> (SSH/VMess/VLESS/Trojan):\n"
+        f"   Status: <code>{st_login}</code>\n\n"
+        "<b>2) Report Online</b> — kirim rekap berkala jumlah user yang <i>sedang online</i> ke topic:\n"
+        f"   Interval: <code>{st_report}</code> (0 = off)\n\n"
+        "<b>Privasi:</b> Tampilkan IP client di notifikasi?\n"
+        f"   Status: <code>{'👁 Tampil' if show_ip else '🙈 Disembunyikan'}</code>\n\n"
+        "💡 Kedua fitur ini <b>terpisah</b> dan hanya mengirim ke topic bila <b>Notifikasi Grup Topic</b> aktif."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=tog_login, callback_data="adm_login_toggle")],
+        [InlineKeyboardButton(text=f"⏱ Set Interval Report ({interval} menit)", callback_data="adm_report_interval")],
+        [InlineKeyboardButton(text="🧪 Kirim Report Sekarang", callback_data="adm_report_now")],
+        [InlineKeyboardButton(text=tog_ip, callback_data="adm_toggle_showip")],
+        [InlineKeyboardButton(text="⬅️ Kembali", callback_data="adm_topic_notif")]
+    ])
+    await _safe_edit(call, text, reply_markup=kb)
+    await call.answer()
+
+@router.callback_query(F.data == "adm_login_toggle")
+async def cb_adm_login_toggle(call: CallbackQuery):
+    if not await _guard_admin(call):
+        return
+    cur = await get_setting("login_notif_enabled")
+    new_val = "0" if cur == "1" else "1"
+    await set_setting("login_notif_enabled", new_val)
+    await generate_portable_backup_sh()
+    await call.answer("🟢 Notif Login DIAKTIFKAN!" if new_val == "1" else "🔴 Notif Login DINONAKTIFKAN!", show_alert=True)
+    await cb_adm_login_notif(call)
+
+@router.callback_query(F.data == "adm_toggle_showip")
+async def cb_adm_toggle_showip(call: CallbackQuery):
+    if not await _guard_admin(call):
+        return
+    cur = await get_setting("show_ip_in_notif")
+    new_val = "0" if cur == "1" else "1"
+    await set_setting("show_ip_in_notif", new_val)
+    await generate_portable_backup_sh()
+    await call.answer("👁 IP akan DITAMPILKAN di notifikasi." if new_val == "1" else "🙈 IP akan DISEMBUNYIKAN di notifikasi.", show_alert=True)
+    await cb_adm_login_notif(call)
+
+@router.callback_query(F.data == "adm_report_interval")
+async def cb_adm_report_interval(call: CallbackQuery, state: FSMContext):
+    if not await _guard_admin(call):
+        return
+    await state.set_state(AdminSettingFSM.value)
+    await state.update_data(key="login_notif_interval_min")
+    await _safe_edit(
+        call,
+        "⏱ Masukkan interval report online dalam <b>menit</b> (contoh: 60 = tiap 1 jam).\n"
+        "Ketik <code>0</code> untuk mematikan report.",
+        reply_markup=cancel_kb("adm_login_notif")
+    )
+    await call.answer()
+
+@router.callback_query(F.data == "adm_report_now")
+async def cb_adm_report_now(call: CallbackQuery):
+    if not await _guard_admin(call):
+        return
+    from .login_notifier import send_online_report
+    grp = (await get_setting("notif_group_id") or "").strip()
+    if not grp:
+        await call.answer("⚠️ Group Topic belum diatur. Ketik /setlog di topic grup dulu.", show_alert=True)
+        return
+    prev_en = await get_setting("notif_topic_enabled")
+    await set_setting("notif_topic_enabled", "1")
+    ok = await send_online_report(call.bot)
+    await set_setting("notif_topic_enabled", prev_en)
+    await call.answer("✅ Report terkirim ke topic!" if ok else "⚠️ Gagal kirim. Cek koneksi bot.", show_alert=True)
 
 # === SUB-MENU KELOLA PRESET BUG ISP (WILDCARD, SNI, CDN) ===
 import re

@@ -33,6 +33,9 @@ DEFAULT_SETTINGS = {
     "notif_topic_enabled": "0",
     "notif_group_id": "",
     "notif_topic_id": "0",
+    "login_notif_enabled": "0",
+    "login_notif_interval_min": "0",
+    "show_ip_in_notif": "1",
     "force_join_text": "⚠️ <b>Wajib Bergabung!</b>\n\nSilakan bergabung ke semua grup/channel di bawah ini terlebih dahulu untuk menggunakan layanan bot:",
     "welcome_text": "👋 Selamat datang di <b>Panel Layanan Akun SSH, Trojan, VLESS &amp; VMess</b>.\nGunakan tombol menu di bawah untuk mengelola akun Anda."
 }
