@@ -2,7 +2,8 @@
 
 Bot Telegram untuk mengelola akun tunneling (SSH, VMess, VLESS, Trojan).
 
-**STATUS: Fase 1 (fondasi) — belum siap produksi.**
+**STATUS: Fase 1–8 selesai (fondasi, installer, akun, protokol, bot inti,
+notifikasi, admin, backup/CLI). Fase 9 (uji & rilis) menunggu approval.**
 
 Lihat `blueprint.md` untuk spesifikasi lengkap. Repo ini dipisah dari
 `tunnel-allinone` dan **tidak boleh** mengubah VPS produksi.

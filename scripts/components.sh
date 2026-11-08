@@ -46,6 +46,18 @@ check_stunnel() {
 
 # ---- main ----
 log "=== components.sh mulai ==="
+if [ $# -ge 1 ]; then
+  # pasang komponen tertentu (dipanggil bot/admin)
+  case "$1" in
+    xray) setup_xray ;;
+    nginx) backup_nginx ;;
+    stunnel) check_stunnel ;;
+    *) log "komponen $1 tidak dikenal" ;;
+  esac
+  log "components.sh $1 selesai."
+  exit 0
+fi
+
 setup_xray
 backup_nginx
 check_stunnel

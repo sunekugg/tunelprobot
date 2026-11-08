@@ -7,7 +7,7 @@ Zona waktu akun (created_at / expired_at) selalu WIB (Asia/Jakarta) sesuai bluep
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -63,7 +63,8 @@ CREATE TABLE IF NOT EXISTS intervals (
     task TEXT PRIMARY KEY,
     value INTEGER NOT NULL DEFAULT 0,
     unit TEXT NOT NULL DEFAULT 'minute' CHECK (unit IN ('minute','hour','day')),
-    enabled INTEGER NOT NULL DEFAULT 0
+    enabled INTEGER NOT NULL DEFAULT 0,
+    last_run TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS topics (
@@ -122,6 +123,7 @@ DEFAULT_SETTINGS = {
     "default_ip_limit": "2",
     "create_batch_days": "3",
     "create_batch_limit": "1",
+    "trial_days": "1",
     "welcome_photo": "",
     "welcome_text": "Welcome {nama}! Waktu server: {waktu_server}.",
 }
@@ -179,6 +181,31 @@ class DB:
             "ON CONFLICT(task) DO UPDATE SET value=excluded.value, "
             "unit=excluded.unit, enabled=excluded.enabled",
             (task, value, unit, enabled),
+        )
+        self._conn.commit()
+
+    def should_run(self, task: str) -> bool:
+        row = self.get_interval(task)
+        if not row or not row["enabled"]:
+            return False
+        from datetime import datetime, timedelta
+        mul = {"minute": 60, "hour": 3600, "day": 86400}
+        delta = timedelta(seconds=max(1, row["value"]) * mul.get(row["unit"], 60))
+        last = row["last_run"]
+        if not last:
+            return True
+        try:
+            # parse "Y-m-d H:M WIB" -> anggap lewat kalau dt sekarang >= last + delta
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("Asia/Jakarta")
+            dt_last = datetime.strptime(last.replace(" WIB", "").strip(), "%Y-%m-%d %H:%M").replace(tzinfo=tz)
+            return now_wib() >= dt_last + delta
+        except Exception:
+            return True
+
+    def touch_interval(self, task: str) -> None:
+        self._conn.execute(
+            "UPDATE intervals SET last_run=? WHERE task=?", (fmt_wib(now_wib()), task),
         )
         self._conn.commit()
 
