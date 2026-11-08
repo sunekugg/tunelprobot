@@ -1543,6 +1543,11 @@ def get_haproxy_client_ips(window_seconds: int = 120) -> dict[str, set[str]]:
             m_req = re.search(r'"(?:GET|POST|PUT|ACL) ([^ "]+) HTTP', ln)
             if not m_req:
                 continue
+            # Endpoint VPN = path "/" (ws-ssh). Scanner pakai /robots.txt,
+            # /actuator/env, /.env, /.git/config dll.
+            path = m_req.group(1)
+            if path != "/":
+                continue
             # Status 101 = WebSocket handshake sukses (koneksi VPN nyata).
             # Scanner datang dgn 400/499/404 (di-reject). Ini saringan utama.
             if '" 101 ' not in ln:
