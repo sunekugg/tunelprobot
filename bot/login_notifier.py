@@ -207,21 +207,21 @@ async def build_online_report() -> str | None:
 
     lines = [
         "<b>DOMAIN :</b>",
-        f"<code>{html.escape(domain)}</code>",
+        f"{html.escape(domain)}",
         "<b>ISP    :</b>",
-        f"<code>{html.escape(isp)}</code>",
+        f"{html.escape(isp)}",
     ]
 
     if ssh_users:
-        lines.append("<b>Users Login SSH/Dropbear</b>")
+        lines.append("<b>Users Login SSH</b>")
         for uname, n in ssh_users:
-            lines.append(f"<code>{html.escape(uname)}</code> {n} PID")
+            lines.append(f"{html.escape(uname)} {n} PID")
         lines.append("")
 
     if xray_users:
-        lines.append("<b>Users Login Xray (VMess/VLESS/Trojan)</b>")
+        lines.append("<b>Users Login Xray</b>")
         for uname, n in xray_users:
-            lines.append(f"<code>{html.escape(uname)}</code> {n} IP")
+            lines.append(f"{html.escape(uname)} {n} IP")
         lines.append("")
 
     lines.append(f"<b>Total : {total_online}</b>")
