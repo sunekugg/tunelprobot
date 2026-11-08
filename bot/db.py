@@ -115,6 +115,13 @@ async def init_db():
             "ALTER TABLE accounts ADD COLUMN quota_gb REAL DEFAULT 0",
             "ALTER TABLE accounts ADD COLUMN used_bytes INTEGER DEFAULT 0",
             "ALTER TABLE accounts ADD COLUMN speed_mbps INTEGER DEFAULT 0",
+            "ALTER TABLE accounts ADD COLUMN acc_type TEXT",
+            "ALTER TABLE accounts ADD COLUMN tg_id INTEGER",
+            "ALTER TABLE accounts ADD COLUMN password_or_uuid TEXT",
+            "ALTER TABLE accounts ADD COLUMN limit_ip INTEGER DEFAULT -1",
+            "ALTER TABLE accounts ADD COLUMN locked_until TEXT DEFAULT ''",
+            "ALTER TABLE accounts ADD COLUMN violations INTEGER DEFAULT 0",
+            "ALTER TABLE accounts ADD COLUMN notified_h1 INTEGER DEFAULT 0",
             "ALTER TABLE servers ADD COLUMN quota_gb REAL DEFAULT 0",
             "ALTER TABLE servers ADD COLUMN used_bytes INTEGER DEFAULT 0",
             "ALTER TABLE servers ADD COLUMN speed_mbps INTEGER DEFAULT 0",
@@ -123,6 +130,20 @@ async def init_db():
                 await db.execute(alter_sql)
             except Exception:
                 pass
+
+        # Migrasi data dari skema lama (protocol/password/uuid/key) ke skema baru
+        async with db.execute("SELECT COUNT(*) FROM accounts WHERE acc_type IS NULL") as cur:
+            need_migrate = (await cur.fetchone())[0]
+        if need_migrate:
+            await db.execute(
+                """UPDATE accounts SET
+                     acc_type = COALESCE(protocol, 'ssh'),
+                     tg_id = owner_id,
+                     password_or_uuid = COALESCE(password, uuid, key, ''),
+                     limit_ip = COALESCE(ip_limit, 0)
+                   WHERE acc_type IS NULL"""
+            )
+            await db.commit()
 
         async with db.execute("SELECT COUNT(*) FROM servers WHERE is_local = 1") as cur:
             cnt = (await cur.fetchone())[0]
