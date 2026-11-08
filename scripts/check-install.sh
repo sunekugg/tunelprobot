@@ -41,6 +41,7 @@ for p in 22 80 443 81 90 444 53 5300 8080 8443 3128 9080 9088; do
 done
 
 echo "== 4. Conntrack =="
+modprobe nf_conntrack 2>/dev/null || true
 max="$(cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null || echo 0)"
 if [ "$max" -ge 65536 ]; then pass "nf_conntrack_max=$max (OK)"; else failn "nf_conntrack_max=${max} DI BAWAH 65536"; fi
 

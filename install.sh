@@ -32,6 +32,21 @@ if [ "$(id -u)" -ne 0 ]; then err "Jalankan sebagai root: sudo bash install.sh";
 mkdir -p "$(dirname "$LOG_FILE")" ; touch "$LOG_FILE"
 log "=== Mulai install tunnel-bot ==="
 
+# ---- Zona waktu, conntrack, dsb. ----
+log "Load module nf_conntrack & naikkan nf_conntrack_max ke 65536"
+modprobe nf_conntrack 2>/dev/null || true
+if [ -f /proc/sys/net/netfilter/nf_conntrack_max ]; then
+  mkdir -p /etc/modules-load.d
+  echo "nf_conntrack" > /etc/modules-load.d/tunnel-bot.conf
+  cat > /etc/sysctl.d/99-conntrack.conf <<SYSCTL
+net.netfilter.nf_conntrack_max = 65536
+SYSCTL
+  sysctl -p /etc/sysctl.d/99-conntrack.conf >>"$LOG_FILE" 2>&1 || true
+  log "nf_conntrack_max: $(cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null || echo 0)"
+else
+  log "⚠️ nf_conntrack_max tidak tersedia (modul tidak bisa dimuat)"
+fi
+
 # ---- backup instalan lama bila ada ----
 if [ -d "$REPO_ROOT" ]; then
   TS="$(date '+%Y%m%d-%H%M%S')"
