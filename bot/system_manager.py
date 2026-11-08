@@ -1518,6 +1518,10 @@ def get_haproxy_client_ips(window_seconds: int = 120) -> dict[str, set[str]]:
             m_req = re.search(r'"(?:GET|POST|PUT|ACL) ([^ "]+) HTTP', ln)
             if not m_req:
                 continue
+            # Status 101 = WebSocket handshake sukses (koneksi VPN nyata).
+            # Scanner datang dgn 400/499/404 (di-reject). Ini saringan utama.
+            if '" 101 ' not in ln:
+                continue
             ua = ""
             m_ua = re.search(r'HTTP/\d+\.\d+" \d{3} (.*)$', ln)
             if m_ua:
