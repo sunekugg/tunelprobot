@@ -122,6 +122,16 @@ def create_os_ssh_user(username: str, password: str) -> bool:
         proc = subprocess.Popen(["chpasswd"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         proc.communicate(input=f"{username}:{password}\n".encode("utf-8"), timeout=10)
         subprocess.run(["usermod", "-U", "-e", "", username], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        # Dropbear menolak user tanpa home dir (Error changing directory → sesi
+        # langsung drop → tidak pernah terdeteksi online). Shell tetap /bin/false
+        # (tunneling saja, tak interaktif), tapi harus ada $HOME supaya sesi hidup.
+        try:
+            home = f"/home/{username}"
+            subprocess.run(["mkdir", "-p", home], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+            subprocess.run(["chown", f"{username}:{username}", home], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+            subprocess.run(["chmod", "750", home], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        except Exception:
+            pass
         if proc.returncode != 0:
             logging.error("create_os_ssh_user: chpasswd returncode %s utk user %s", proc.returncode, username)
         return proc.returncode == 0
