@@ -1467,7 +1467,10 @@ def get_xray_active_ips(window_seconds: int = 120) -> dict[str, set[str]]:
                     except Exception:
                         pass
                 m_email = re.search(r"email:\s*([a-zA-Z0-9_-]+)", line)
-                m_ip = re.search(r"from\s+(?:tcp:)?([0-9a-fA-F\.:]+):\d+", line)
+                # IP client di 'accepted tcp:IP:port' / 'accepted udp:IP:port'.
+                # 'from 127.0.0.1' selalu internal (haproxy/nginx), jangan dipakai.
+                m_ip = re.search(r"accepted\s+tcp:([0-9a-fA-F\.:]+):\d+", line) or \
+                       re.search(r"accepted\s+udp:([0-9a-fA-F\.:]+):\d+", line)
                 if m_email and m_ip:
                     ip = m_ip.group(1).strip("[]")
                     if ip not in ("127.0.0.1", "::1", "0.0.0.0"):
