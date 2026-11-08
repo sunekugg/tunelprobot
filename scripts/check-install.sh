@@ -17,10 +17,13 @@ tz="$(timedatectl show -p Timezone --value 2>/dev/null || echo '')"
 if [ "$tz" = "Asia/Jakarta" ]; then pass "zona waktu: $tz (WIB)"; else failn "zona waktu: ${tz:-?} bukan Asia/Jakarta"; fi
 
 echo "== 2. Dropbear 2019 terkunci =="
-if command -v dropbear >/dev/null 2>&1; then
-  dv="$(dropbear -V 2>&1 | head -1 || echo 'unknown')"
+if command -v dropbear >/dev/null 2>&1 || [ -x /usr/local/sbin/dropbear ]; then
+  dv="$( (dropbear -V 2>&1 || /usr/local/sbin/dropbear -V 2>&1) | head -1 || echo 'unknown')"
   echo "  version: $dv"
-  pass "dropbear terpasang"
+  case "$dv" in
+    *2019*) pass "dropbear 2019 OK" ;;
+    *) failn "dropbear bukan 2019 ($dv)" ;;
+  esac
 else
   warn "dropbear tidak terdeteksi di PATH"
 fi

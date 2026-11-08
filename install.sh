@@ -13,6 +13,19 @@ TZ_TARGET="Asia/Jakarta"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 err() { echo "❌ $*" >&2; exit 1; }
 
+# Tunggu apt/dpkg lock bebas (unattended-upgrade dll) hingga 5 menit.
+wait_apt_lock() {
+  local n=0
+  while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    n=$((n+1))
+    if [ "$n" -ge 60 ]; then
+      err "apt/dpkg masih terkunci setelah 5 menit. Hentikan proses update lain lalu jalankan ulang."
+    fi
+    log "apt terkunci (proses lain) — tunggu 5s ($((5*n))s)"
+    sleep 5
+  done
+}
+
 # ---- pastikan root ----
 if [ "$(id -u)" -ne 0 ]; then err "Jalankan sebagai root: sudo bash install.sh"; fi
 
@@ -36,16 +49,38 @@ log "Zona waktu saat ini: $(timedatectl show -p Timezone --value 2>/dev/null || 
 # ---- dependency dasar ----
 log "Update apt & pasang dependency dasar"
 export DEBIAN_FRONTEND=noninteractive
+wait_apt_lock
 apt-get update -y >>"$LOG_FILE" 2>&1
+wait_apt_lock
 apt-get install -y git curl wget jq cron python3 python3-venv python3-pip \
                    sqlite3 tzdata >>"$LOG_FILE" 2>&1
 
-# ---- Dropbear 2019 (terkunci) ----
-log "Pasang Dropbear dan kunci versi 2019.x"
-apt-get install -y dropbear >>"$LOG_FILE" 2>&1 || true
-DROPBEAR_VER="$(dropbear -V 2>&1 | head -1 || true)"
-log "Dropbear terpasang: $DROPBEAR_VER"
-# Kunci versi saat ini (jangan auto-upgrade).
+# ---- Dependency: build-essential utk compile Dropbear 2019 ----
+log "Pasang build-essential (utk compile Dropbear 2019)"
+wait_apt_lock
+apt-get install -y build-essential zlib1g-dev libssl-dev >>"$LOG_FILE" 2>&1 || true
+
+# ---- Dropbear 2019 (compile dari source, sesuai blueprint §1) ----
+# Blueprint minta Dropbear 2019. Ubuntu apt hanya sedia 2020.81+.
+# Maka compile dari tag DROPBEAR_2019.78 di GitHub mkj/dropbear.
+DROPBEAR_TAG="${DROPBEAR_TAG:-DROPBEAR_2019.78}"
+DROPBEAR_SRC="/usr/local/src/dropbear-2019"
+log "Compile Dropbear 2019 dari source (tag=$DROPBEAR_TAG)"
+wait_apt_lock
+apt-get remove -y dropbear >>"$LOG_FILE" 2>&1 || true
+rm -rf "$DROPBEAR_SRC"
+mkdir -p "$DROPBEAR_SRC" && cd "$DROPBEAR_SRC"
+curl -fsSL "https://github.com/mkj/dropbear/archive/refs/tags/$DROPBEAR_TAG.tar.gz" -o dropbear-src.tar.gz >>"$LOG_FILE" 2>&1 \
+  || err "Gagal download source Dropbear $DROPBEAR_TAG"
+tar -xzf dropbear-src.tar.gz --strip-components=1
+./configure >>"$LOG_FILE" 2>&1 || err "configure Dropbear gagal"
+make -j"$(nproc)" >>"$LOG_FILE" 2>&1 || err "make Dropbear gagal"
+make install >>"$LOG_FILE" 2>&1 || err "install Dropbear gagal"
+# binary di /usr/local/sbin/dropbear; pastikan di PATH & versi terkunci
+ln -sf /usr/local/sbin/dropbear /usr/sbin/dropbear || true
+dropbear -V >/dev/null 2>&1 || PATH=/usr/local/sbin:$PATH dropbear -V
+DROPBEAR_VER="$(PATH=/usr/local/sbin:$PATH dropbear -V 2>&1 | head -1 || true)"
+log "Dropbear 2019 terpasang: $DROPBEAR_VER"
 apt-mark hold dropbear >/dev/null 2>&1 || true
 log "apt-mark showhold: $(apt-mark showhold | tr '\n' ' ')"
 
@@ -61,6 +96,12 @@ read -rp "URL repo GitHub (https://github.com/<user>/<repo>.git): " REPO_URL_IN
 [ -z "$DOMAIN_IN" ] && err "Domain utama wajib diisi."
 [ -z "$REPO_URL_IN" ] && err "URL repo GitHub wajib diisi."
 
+# Untuk clone dari repo privat, token GitHub opsional (kalau token Telegram
+# TIDAK sama dengan token GitHub). Kalau token Telegram juga valid untuk
+# GitHub, bisa langsung pakai itu. Beri prompt sekali (boleh kosong jika
+# repo publik).
+read -rp "Token GitHub (opsional, kosongkan utk repo publik): " GH_TOKEN_IN || true
+
 # ---- clone / pull repo (non-destructive) ----
 if [ -d "$REPO_ROOT/.git" ]; then
   log "Repo sudah ada, tarik versi terbaru (tanpa reset --hard)"
@@ -71,7 +112,15 @@ if [ -d "$REPO_ROOT/.git" ]; then
 else
   log "Clone repo dari $REPO_URL_IN"
   rm -rf "$REPO_ROOT"
-  git clone --branch main "$REPO_URL_IN" "$REPO_ROOT" >>"$LOG_FILE" 2>&1
+  # Simpan token ke credential helper agar tidak bocor ke log/command (URL).
+  if [ -n "${GH_TOKEN_IN:-}" ]; then
+    host="$(printf '%s' "$REPO_URL_IN" | sed -E 's#https?://([^/]+)/.*#\1#')"
+    printf 'protocol=https\nhost=%s\nusername=oauth2\npassword=%s\n\n' "$host" "$GH_TOKEN_IN" \
+      | git credential approve 2>/dev/null || true
+  fi
+  GIT_TERMINAL_PROMPT=0 git clone --branch main --depth 1 "$REPO_URL_IN" "$REPO_ROOT" >>"$LOG_FILE" 2>&1 \
+    && log "clone sukses" \
+    || err "clone gagal. Periksa URL repo atau set GITHUB_TOKEN."
 fi
 
 # ---- cek port sebelum bind (lihat blueprint §4) ----
