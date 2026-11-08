@@ -89,14 +89,9 @@ async def scheduler_loop(bot: Bot):
             # 1. Tarik bandwidth, vnStat, dan daftar IP aktif dari semua server secara non-blocking
             await refresh_all_servers_live_stats(force=True)
 
-            # 1b. Deteksi login baru (SSH/VMess/VLESS/Trojan) & notif ke topic
+            # 1b. (notifikasi login per-event tidak lagi dikirim ke topic — hanya report berkala)
             ssh_sessions = await asyncio.to_thread(get_ssh_active_sessions)
             xray_ips = await asyncio.to_thread(get_xray_active_ips)
-            try:
-                from .login_notifier import detect_and_notify_new_logins
-                await detect_and_notify_new_logins(bot, ssh_sessions, xray_ips)
-            except Exception:
-                pass
 
             now_dt = now_wib().replace(tzinfo=None)
             now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -110,7 +105,6 @@ async def scheduler_loop(bot: Bot):
                     all_accounts = [dict(r) for r in await cur.fetchall()]
 
             expired_ids: list[int] = []
-            expired_report: list[str] = []
             affected_xray_srvs: set[int] = set()
             backup_needed = False
 
@@ -145,12 +139,6 @@ async def scheduler_loop(bot: Bot):
                             await delete_ssh_on_server(sid, uname)
                         else:
                             affected_xray_srvs.add(sid)
-                        try:
-                            expired_report.append(
-                                f"  • <code>{html.escape(uname)}</code> ({atype.upper()}) — exp: <code>{html.escape(exp_str)}</code>"
-                            )
-                        except Exception:
-                            pass
                         try:
                             msg = (
                                 "⏰ <b>Pemberitahuan Akun Expired</b>\n\n"
@@ -224,21 +212,6 @@ async def scheduler_loop(bot: Bot):
                     await db.execute(f"DELETE FROM accounts WHERE id IN ({placeholders})", expired_ids)
                     await db.commit()
                 backup_needed = True
-                # Rekap akun expired ke topic grup
-                if expired_report:
-                    try:
-                        from .login_notifier import _send_to_topic
-                        rep_txt = (
-                            "⏰ <b>REKAP AKUN EXPIRED (DIHAPUS OTOMATIS)</b>\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                            + "\n".join(expired_report)
-                            + f"\n━━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"👥 <b>Total:</b> <code>{len(expired_report)} akun</code>\n"
-                            f"🕒 <code>{now_str} WIB</code>"
-                        )
-                        await _send_to_topic(bot, rep_txt)
-                    except Exception as e:
-                        print(f"[EXPIRED TOPIC REPORT ERROR] {e}")
 
             # 3. Penegakan Limit IP Multi-Server (Non-Blocking di Thread)
             # ssh_sessions & xray_ips sudah diambil di langkah 1b
