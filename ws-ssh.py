@@ -125,14 +125,14 @@ async def handle(cr, cw, source_desc):
 
 async def handle_plain(cr, cw):
     """Port publik 9080/9088 — peer name = IP asli."""
-    peer = cr.get_extra_info("peername")
+    peer = cw.get_extra_info("peername")
     ip = peer[0] if peer else "127.0.0.1"
     await handle(cr, cw, {"ip": ip, "mode": "peer"})
 
 
 async def handle_ws(cr, cw):
     """Port 10015 — dari nginx, baca header X-Real-IP dari HTTP request awal."""
-    peer = cr.get_extra_info("peername")
+    peer = cw.get_extra_info("peername")
     ip = peer[0] if peer else "127.0.0.1"
     # Baca seluruh header (sampai \r\n\r\n) atau chunk besar pertama.
     buf = b""
@@ -195,7 +195,7 @@ async def handle_with_first_chunk(cr, cw, first_chunk, ip):
 
 async def handle_proxy_v1(cr, cw):
     """Port 10016 — HAProxy jalur SSH- dgn send-proxy v1."""
-    peer = cr.get_extra_info("peername")
+    peer = cw.get_extra_info("peername")
     ip = peer[0] if peer else "127.0.0.1"
     # PROXY v1 line: "PROXY TCP4 <src_ip> <dst_ip> <src_port> <dst_port>\r\n"
     try:
