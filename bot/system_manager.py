@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 import sys
+import logging
 import time
 import json
 import html
@@ -121,8 +122,11 @@ def create_os_ssh_user(username: str, password: str) -> bool:
         proc = subprocess.Popen(["chpasswd"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         proc.communicate(input=f"{username}:{password}\n".encode("utf-8"), timeout=10)
         subprocess.run(["usermod", "-U", "-e", "", username], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        if proc.returncode != 0:
+            logging.error("create_os_ssh_user: chpasswd returncode %s utk user %s", proc.returncode, username)
         return proc.returncode == 0
-    except Exception:
+    except Exception as e:
+        logging.error("create_os_ssh_user EXC utk %s: %s", username, e)
         return False
 
 def lock_os_ssh_user(username: str, lock: bool = True, password: str = ""):
