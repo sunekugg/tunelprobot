@@ -62,23 +62,23 @@ apt-get install -y build-essential zlib1g-dev libssl-dev >>"$LOG_FILE" 2>&1 || t
 
 # ---- Dropbear 2019 (compile dari source, sesuai blueprint §1) ----
 # Blueprint minta Dropbear 2019. Ubuntu apt hanya sedia 2020.81+.
-# Maka compile dari tag DROPBEAR_2019.78 di GitHub mkj/dropbear.
-DROPBEAR_TAG="${DROPBEAR_TAG:-DROPBEAR_2019.78}"
+# Sumber resmi: matt.ucc.asn.au (mirror release distro Dropbear 2019.78).
+DROPBEAR_VER_2019="2019.78"
+DROPBEAR_URL="${DROPBEAR_URL:-https://matt.ucc.asn.au/dropbear/releases/dropbear-${DROPBEAR_VER_2019}.tar.bz2}"
 DROPBEAR_SRC="/usr/local/src/dropbear-2019"
-log "Compile Dropbear 2019 dari source (tag=$DROPBEAR_TAG)"
+log "Compile Dropbear $DROPBEAR_VER_2019 dari $DROPBEAR_URL"
 wait_apt_lock
 apt-get remove -y dropbear >>"$LOG_FILE" 2>&1 || true
 rm -rf "$DROPBEAR_SRC"
 mkdir -p "$DROPBEAR_SRC" && cd "$DROPBEAR_SRC"
-curl -fsSL "https://github.com/mkj/dropbear/archive/refs/tags/$DROPBEAR_TAG.tar.gz" -o dropbear-src.tar.gz >>"$LOG_FILE" 2>&1 \
-  || err "Gagal download source Dropbear $DROPBEAR_TAG"
-tar -xzf dropbear-src.tar.gz --strip-components=1
+curl -fsSL "$DROPBEAR_URL" -o dropbear-src.tar.bz2 >>"$LOG_FILE" 2>&1 \
+  || err "Gagal download source Dropbear $DROPBEAR_URL"
+tar -xjf dropbear-src.tar.bz2 --strip-components=1
 ./configure >>"$LOG_FILE" 2>&1 || err "configure Dropbear gagal"
 make -j"$(nproc)" >>"$LOG_FILE" 2>&1 || err "make Dropbear gagal"
 make install >>"$LOG_FILE" 2>&1 || err "install Dropbear gagal"
 # binary di /usr/local/sbin/dropbear; pastikan di PATH & versi terkunci
 ln -sf /usr/local/sbin/dropbear /usr/sbin/dropbear || true
-dropbear -V >/dev/null 2>&1 || PATH=/usr/local/sbin:$PATH dropbear -V
 DROPBEAR_VER="$(PATH=/usr/local/sbin:$PATH dropbear -V 2>&1 | head -1 || true)"
 log "Dropbear 2019 terpasang: $DROPBEAR_VER"
 apt-mark hold dropbear >/dev/null 2>&1 || true
