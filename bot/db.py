@@ -132,18 +132,22 @@ async def init_db():
                 pass
 
         # Migrasi data dari skema lama (protocol/password/uuid/key) ke skema baru
-        async with db.execute("SELECT COUNT(*) FROM accounts WHERE acc_type IS NULL") as cur:
-            need_migrate = (await cur.fetchone())[0]
-        if need_migrate:
-            await db.execute(
-                """UPDATE accounts SET
-                     acc_type = COALESCE(protocol, 'ssh'),
-                     tg_id = owner_id,
-                     password_or_uuid = COALESCE(password, uuid, key, ''),
-                     limit_ip = COALESCE(ip_limit, 0)
-                   WHERE acc_type IS NULL"""
-            )
-            await db.commit()
+        # Hanya jika tabel masih punya kolom lama (DB upgrade dari PTB lama).
+        async with db.execute("PRAGMA table_info(accounts)") as cur:
+            cols = {row[1] for row in await cur.fetchall()}
+        if "protocol" in cols and "owner_id" in cols:
+            async with db.execute("SELECT COUNT(*) FROM accounts WHERE acc_type IS NULL") as cur:
+                need_migrate = (await cur.fetchone())[0]
+            if need_migrate:
+                await db.execute(
+                    """UPDATE accounts SET
+                         acc_type = COALESCE(protocol, 'ssh'),
+                         tg_id = owner_id,
+                         password_or_uuid = COALESCE(password, uuid, key, ''),
+                         limit_ip = COALESCE(ip_limit, 0)
+                       WHERE acc_type IS NULL"""
+                )
+                await db.commit()
 
         # Domain lokal TIDAK ditimpa config.env setelah server dibuat,
         # agar perubahan domain lewat panel admin tetap tersimpan.
