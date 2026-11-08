@@ -118,7 +118,7 @@ def system_user_exists(username: str) -> bool:
 def create_os_ssh_user(username: str, password: str) -> bool:
     try:
         if not system_user_exists(username):
-            r = subprocess.run(["useradd", "-M", "-s", "/bin/false", username], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+            subprocess.run(["useradd", "-M", "-s", "/bin/false", username], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
         proc = subprocess.Popen(["chpasswd"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         proc.communicate(input=f"{username}:{password}\n".encode("utf-8"), timeout=10)
         subprocess.run(["usermod", "-U", "-e", "", username], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
@@ -1320,9 +1320,73 @@ def get_cluster_node_stats(server_id: int) -> dict:
         "vnstat_mth": cached.get("vnstat_mth", "0.00 MiB"),
     }
 
+_SYS_USERS = {"root", "sshd", "dropbear", "nobody", "daemon", "www-data"}
+
+def _read_dropbear_auth_map() -> dict[str, tuple[str, str]]:
+    """Baca auth.log/syslog → {pid_dropbear: (user, remote_ip)} dari 'Password auth succeeded'."""
+    pid_map: dict[str, tuple[str, str]] = {}
+    for log_p in ("/var/log/auth.log", "/var/log/syslog"):
+        if not os.path.exists(log_p):
+            continue
+        try:
+            with open(log_p, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                fsize = f.tell()
+                f.seek(max(0, fsize - 120000), os.SEEK_SET)
+                lines = f.read().decode("utf-8", errors="ignore").splitlines()[-1000:]
+            for ln in lines:
+                if "dropbear[" not in ln:
+                    continue
+                m = re.search(
+                    r"dropbear\[(\d+)\]:\s*Password auth succeeded for '([^']+)' from ([0-9a-fA-F\.:]+):",
+                    ln,
+                )
+                if m:
+                    pid_map[m.group(1)] = (m.group(2), m.group(3).strip("[]"))
+        except Exception:
+            pass
+    return pid_map
+
+def _read_ps_user_maps() -> tuple[dict[str, str], dict[str, list[str]]]:
+    """ps -eo sekali → (pid→user VPN, ppid→[user anak]). Meniru installer.
+
+    Menyelesaikan 'sshd: user [priv/net]' (proses milik root) dengan user tujuan."""
+    pid_user_map: dict[str, str] = {}
+    ppid_children_map: dict[str, list[str]] = {}
+    try:
+        out = subprocess.check_output(
+            ["ps", "-eo", "pid=,ppid=,user=,args="], text=True, stderr=subprocess.DEVNULL, timeout=5
+        )
+        for pline in out.splitlines():
+            parts = pline.strip().split(None, 3)
+            if len(parts) < 3:
+                continue
+            p_id, pp_id, p_usr = parts[0], parts[1], parts[2]
+            p_args = parts[3] if len(parts) > 3 else ""
+            resolved = ""
+            if p_usr not in _SYS_USERS:
+                resolved = p_usr
+            else:
+                m = re.search(r"sshd:\s*([a-zA-Z0-9_-]+)", p_args)
+                if m and m.group(1) not in _SYS_USERS:
+                    resolved = m.group(1)
+            if resolved:
+                pid_user_map[p_id] = resolved
+                ppid_children_map.setdefault(pp_id, []).append(resolved)
+    except Exception:
+        pass
+    return pid_user_map, ppid_children_map
+
 def get_ssh_active_sessions() -> dict[str, list[tuple[int, str]]]:
+    """Sesi SSH/dropbear aktif → {username: [(pid, remote_ip)]}.
+
+    Meniru installer: gabung auth.log (dropbear) + ps -eo (sshd user) + ss -tnp (IP remote).
+    Tanpa ini, semua sesi terlihat milik 'root' karena socket owner = proses root.
+    """
     result: dict[str, list[tuple[int, str]]] = {}
-    SystemUsers = {"root", "sshd", "dropbear", "nobody", "daemon", "www-data"}
+    db_map = _read_dropbear_auth_map()
+    pid_user_map, ppid_children_map = _read_ps_user_maps()
+
     try:
         out = subprocess.check_output(["ss", "-tnp"], text=True, stderr=subprocess.DEVNULL, timeout=5)
         for line in out.splitlines():
@@ -1331,28 +1395,17 @@ def get_ssh_active_sessions() -> dict[str, list[tuple[int, str]]]:
             parts = line.split()
             if len(parts) < 5:
                 continue
-            ip = parts[4].rsplit(":", 1)[0].strip("[]")
+            remote_ip = parts[4].rsplit(":", 1)[0].strip("[]")
             for pid_str in re.findall(r"pid=(\d+)", line):
-                pid = int(pid_str)
-                try:
-                    with open(f"/proc/{pid}/cmdline", "rb") as cf:
-                        cmd_s = cf.read().replace(b"\x00", b" ").decode("utf-8", errors="ignore").strip()
-                    m_cmd = re.search(r"sshd:\s*([a-zA-Z0-9_-]+)", cmd_s)
-                    if m_cmd and m_cmd.group(1) not in SystemUsers:
-                        result.setdefault(m_cmd.group(1), []).append((pid, ip))
-                except Exception:
-                    pass
-                try:
-                    p = psutil.Process(pid)
-                    uname = p.username()
-                    if uname and uname not in SystemUsers:
-                        result.setdefault(uname, []).append((pid, ip))
-                    for child in p.children(recursive=True):
-                        c_uname = child.username()
-                        if c_uname and c_uname not in SystemUsers:
-                            result.setdefault(c_uname, []).append((child.pid, ip))
-                except Exception:
-                    continue
+                if pid_str in db_map:
+                    u_db, ip_db = db_map[pid_str]
+                    if u_db and u_db not in _SYS_USERS:
+                        use_ip = ip_db if remote_ip in ("127.0.0.1", "::1") else remote_ip
+                        result.setdefault(u_db, []).append((int(pid_str), use_ip))
+                if pid_str in pid_user_map:
+                    result.setdefault(pid_user_map[pid_str], []).append((int(pid_str), remote_ip))
+                for child_u in ppid_children_map.get(pid_str, []):
+                    result.setdefault(child_u, []).append((int(pid_str), remote_ip))
     except Exception:
         pass
 
