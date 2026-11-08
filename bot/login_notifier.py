@@ -229,21 +229,17 @@ async def build_online_report() -> str | None:
 
 
 async def send_online_report(bot: Bot) -> bool:
-    """Kirim rekap online ke topic. Return True jika terkirim."""
+    """Kirim rekap online ke topic HANYA jika ada user yang sedang online.
+
+    Return True jika ada user online & terkirim; False jika kosong / gagal kirim.
+    """
     try:
         if (await get_setting("notif_topic_enabled")) != "1":
             return False
         report = await build_online_report()
         if report is None:
-            domain = _get_server_hostname()
-            isp = await _get_isp_cached()
-            report = (
-                f"<b>DOMAIN :</b>\n<code>{html.escape(domain)}</code>\n"
-                f"<b>ISP    :</b>\n<code>{html.escape(isp)}</code>\n\n"
-                "<b>Users Login SSH/Dropbear</b>\n"
-                "(tidak ada user online)\n\n"
-                "<b>Total : 0</b>"
-            )
+            # Tidak ada user online → jangan kirim apa-apa ke topic
+            return False
         await _send_to_topic(bot, report)
         return True
     except Exception as e:
