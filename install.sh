@@ -84,6 +84,34 @@ log "Dropbear 2019 terpasang: $DROPBEAR_VER"
 apt-mark hold dropbear >/dev/null 2>&1 || true
 log "apt-mark showhold: $(apt-mark showhold | tr '\n' ' ')"
 
+# Konfigurasi systemd dropbear-2019 (port 90, sesuai blueprint §4)
+log "Pasang service dropbear-2019 di port 90"
+mkdir -p /etc/dropbear
+chmod 700 /etc/dropbear
+[ -f /etc/dropbear/dropbear_rsa_host_key ] || \
+  /usr/local/sbin/dropbearkey -t rsa -s 2048 -f /etc/dropbear/dropbear_rsa_host_key >/dev/null 2>&1 || true
+[ -f /etc/dropbear/dropbear_ed25519_host_key ] || \
+  /usr/local/sbin/dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >/dev/null 2>&1 || true
+cat > /etc/systemd/system/dropbear-2019.service <<UNIT
+[Unit]
+Description=Dropbear SSH (2019) - tunnel-bot port 90
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/local/sbin/dropbear -p 90 -r /etc/dropbear/dropbear_rsa_host_key -r /etc/dropbear/dropbear_ed25519_host_key
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable dropbear-2019 >/dev/null 2>&1 || true
+# start hanya bila port 90 bebas
+if ! ss -lntu | awk '{print $4}' | grep -q ":90\$"; then
+  systemctl start dropbear-2019 || log "⚠️ dropbear-2019 gagal start (cek port 90)"
+fi
+
 # ---- input interaktif ----
 echo
 echo "=== Konfigurasi awal (hanya ini yang ditanya) ==="
