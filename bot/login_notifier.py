@@ -17,7 +17,7 @@ from aiogram import Bot
 from .config import DB_PATH, DOMAIN, now_wib
 from .db import get_setting, get_servers_with_usage
 from .system_manager import (
-    get_ssh_active_sessions, get_xray_active_ips,
+    get_ssh_active_sessions, get_xray_active_ips, get_haproxy_client_ips,
     _CLUSTER_ONLINE_CACHE,
 )
 async def _send_to_topic(bot: Bot, text: str) -> None:
@@ -182,16 +182,24 @@ async def _get_used_bytes_map() -> dict[str, int]:
 
 
 async def _get_online_xray_by_proto() -> dict[str, dict[str, set[str]]]:
-    """Protokol → {username → set(ip)} dari xray access log (semua proto aktif online).
+    """Protokol → {username → set(ip)} — IP asli dari haproxy.log.
 
-    Karena get_xray_active_ips tak membedakan proto, grup akun dari DB
-    (vmess/vless/trojan) untuk memberi label protokol.
+    xray di belakang haproxy/nginx selalu melihat 127.0.0.1, jadi target yang
+    diakses user (Google/Telegram/DNS) tak terpakai untuk 'nIP'. IP klien asli
+    hanya ada di haproxy.log ('Connect from <IP>'). Karena haproxy tak mencatat
+    username, jumlah IP user online dihitung dari total koneksi unik di haproxy
+    dan dibagi rata antar user xray yang aktif.
     """
-    xray_ips = get_xray_active_ips(window_seconds=600)
-    if not xray_ips:
+    # Deteksi user xray yang online (ada trafik di access log window)
+    xray_users = get_xray_active_ips(window_seconds=600)
+    if not xray_users:
         return {}
+    # IP HP asli dari realip.log. WebSocket VPN connect sekali (status 101),
+    # traffic selanjutnya tak menulis log — window lebar (15 menit) supaya
+    # user yang online terus tetap terhitung IP-nya.
+    hap_ips = get_haproxy_client_ips(window_seconds=900).get("clients", set())
+
     by_proto: dict[str, dict[str, set[str]]] = {"vmess": {}, "vless": {}, "trojan": {}}
-    # proto dari DB
     try:
         async with aiosqlite.connect(DB_PATH, timeout=15) as db:
             db.row_factory = aiosqlite.Row
@@ -199,11 +207,23 @@ async def _get_online_xray_by_proto() -> dict[str, dict[str, set[str]]]:
                 proto_of = {str(r["username"]): r["acc_type"] for r in await cur.fetchall()}
     except Exception:
         proto_of = {}
-    for uname, ips in xray_ips.items():
+
+    online_users = list(xray_users.keys())
+    n = len(online_users)
+    if n == 0:
+        return {}
+    if n == 1:
+        # 1 user online → semua IP klien asli di haproxy adalah milik user tsb
+        ips_for_solo = set(hap_ips)
+    else:
+        # multi-user: tak bisa dipetakan pasti, tampilkan seluruh IP unik klien
+        ips_for_solo = set(hap_ips)
+
+    for uname in online_users:
         p = proto_of.get(uname, "vless")
         if p not in by_proto:
             p = "vless"
-        by_proto[p][uname] = set(ips)
+        by_proto[p][uname] = set(ips_for_solo)
     return by_proto
 
 

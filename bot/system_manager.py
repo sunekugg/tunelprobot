@@ -1486,6 +1486,54 @@ def get_xray_active_ips(window_seconds: int = 120) -> dict[str, set[str]]:
                 active.setdefault(uname, set()).add(ip)
     return active
 
+
+def get_haproxy_client_ips(window_seconds: int = 120) -> dict[str, set[str]]:
+    """IP HP asli user dari /var/log/nginx/realip.log.
+
+    Jalur: HP → Cloudflare (meneruskan CF-Connecting-IP) → haproxy (TLS offload,
+    L4) → nginx (real_ip_header CF-Connecting-IP → $remote_addr = IP asli).
+    Format baris realip.log: '<ip> [<time_local>] "GET /path HTTP/1.1" <status> <UA>'
+    """
+    ips: set[str] = set()
+    log_p = "/var/log/nginx/realip.log"
+    if not os.path.exists(log_p):
+        return {}
+    try:
+        from datetime import timedelta, timezone
+        now_dt = datetime.datetime.now(timezone(timedelta(hours=7)))
+        cutoff = now_dt - timedelta(seconds=window_seconds)
+        with open(log_p, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            fsize = f.tell()
+            f.seek(max(0, fsize - 300000), os.SEEK_SET)
+            lines = f.read().decode("utf-8", errors="ignore").splitlines()[-3000:]
+        for ln in lines:
+            # '<ip> [08/Nov/2026:22:12:13 +0700] "GET /trojan HTTP/1.1" 404 UA'
+            # Hanya baris status 101 (WebSocket upgrade sukses = koneksi VPN),
+            # bukan scanner 400/499/404.
+            if '" 101 ' not in ln:
+                continue
+            m_time = re.search(r"\[(\d{2})/(\w{3})/(\d{4}):(\d{2}):(\d{2}):(\d{2}) [+-]\d{4}\]", ln)
+            if m_time:
+                try:
+                    log_dt = datetime.datetime.strptime(
+                        f"{m_time.group(1)} {m_time.group(2)} {m_time.group(3)} {m_time.group(4)}:{m_time.group(5)}:{m_time.group(6)}",
+                        "%d %b %Y %H:%M:%S"
+                    ).replace(tzinfo=timezone(timedelta(hours=7)))
+                    if log_dt < cutoff or log_dt > now_dt:
+                        continue
+                except Exception:
+                    pass
+            # IP asli = kolom pertama
+            m_ip = re.match(r"^([0-9a-fA-F\.:]+)\s+", ln)
+            if m_ip:
+                ip = m_ip.group(1)
+                if ip not in ("127.0.0.1", "::1", "0.0.0.0"):
+                    ips.add(ip)
+    except Exception:
+        pass
+    return {"clients": ips}
+
 async def collect_bandwidth_from_server(srv: dict) -> dict[str, int]:
     sid = int(srv["id"])
     if srv.get("is_local", 1) == 1:
