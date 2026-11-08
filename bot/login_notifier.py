@@ -20,8 +20,6 @@ from .system_manager import (
     get_ssh_active_sessions, get_xray_active_ips,
     _CLUSTER_ONLINE_CACHE,
 )
-
-
 async def _send_to_topic(bot: Bot, text: str) -> None:
     """Kirim teks ke topic grup log (jika diaktifkan)."""
     try:
@@ -167,6 +165,48 @@ async def detect_and_notify_new_logins(bot: Bot, ssh_sess: dict, xray_ips: dict)
 # FITUR 2: Rekap berkala jumlah user online
 # ============================================================
 
+async def _get_used_bytes_map() -> dict[str, int]:
+    """username → used_bytes (untuk tampilan pemakaian di report xray)."""
+    m: dict[str, int] = {}
+    try:
+        async with aiosqlite.connect(DB_PATH, timeout=15) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT username, used_bytes FROM accounts WHERE acc_type != 'ssh'"
+            ) as cur:
+                for r in await cur.fetchall():
+                    m[str(r["username"])] = int(r["used_bytes"] or 0)
+    except Exception:
+        pass
+    return m
+
+
+async def _get_online_xray_by_proto() -> dict[str, dict[str, set[str]]]:
+    """Protokol → {username → set(ip)} dari xray access log (semua proto aktif online).
+
+    Karena get_xray_active_ips tak membedakan proto, grup akun dari DB
+    (vmess/vless/trojan) untuk memberi label protokol.
+    """
+    xray_ips = get_xray_active_ips(window_seconds=600)
+    if not xray_ips:
+        return {}
+    by_proto: dict[str, dict[str, set[str]]] = {"vmess": {}, "vless": {}, "trojan": {}}
+    # proto dari DB
+    try:
+        async with aiosqlite.connect(DB_PATH, timeout=15) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT username, acc_type FROM accounts WHERE acc_type != 'ssh'") as cur:
+                proto_of = {str(r["username"]): r["acc_type"] for r in await cur.fetchall()}
+    except Exception:
+        proto_of = {}
+    for uname, ips in xray_ips.items():
+        p = proto_of.get(uname, "vless")
+        if p not in by_proto:
+            p = "vless"
+        by_proto[p][uname] = set(ips)
+    return by_proto
+
+
 async def build_online_report() -> str | None:
     """Bangun teks rekap user online (SSH + Xray). Return None jika kosong.
 
@@ -175,30 +215,39 @@ async def build_online_report() -> str | None:
         <domain>
         ISP    :
         <isp>
-        Users Login SSH/Dropbear
+        Users Login SSH
+        ajii 1 PID
         alyx 1 PID
-        ...
-        Total : 18
+        Users Login VMESS
+        bernat 2.7GB 1IP | 19330
+        Total : 1
     """
     ssh_sess = get_ssh_active_sessions()
-    xray_ips = get_xray_active_ips(window_seconds=120)
+    xray_by_proto = await _get_online_xray_by_proto()
+    used_map = await _get_used_bytes_map()
 
     acc_map = await _get_all_accounts_map()
 
-    # Hanya akun yang aktif (belum expired) + sedang online sekarang
-    ssh_users: list[tuple[str, int]] = []
+    # Hanya akun aktif (belum expired) + sedang online sekarang
+    ssh_users: list[str] = []
     for uname, sess_list in ssh_sess.items():
         if uname in acc_map:
-            ssh_users.append((uname, len(sess_list)))
-    ssh_users.sort(key=lambda x: x[0])
+            ssh_users.append(uname)
+    ssh_users.sort()
 
-    xray_users: list[tuple[str, int]] = []
-    for uname, ips in xray_ips.items():
-        if uname in acc_map:
-            xray_users.append((uname, len(ips)))
-    xray_users.sort(key=lambda x: x[0])
+    xray_lines_by_proto: dict[str, list[str]] = {}
+    for proto, m in xray_by_proto.items():
+        for uname, ips in m.items():
+            if uname not in acc_map:
+                continue
+            n = len(ips)
+            used_gb = used_map.get(uname, 0) / (1024**3)
+            used_s = f"{used_gb:.1f}GB" if used_gb >= 0.01 else "0.0GB"
+            port = _xray_port_for(proto)
+            xray_lines_by_proto.setdefault(proto, []).append(f"{html.escape(uname)} {used_s} {n}IP | {port}")
+        xray_lines_by_proto[proto] = sorted(xray_lines_by_proto.get(proto, []))
 
-    total_online = len(ssh_users) + len(xray_users)
+    total_online = len(ssh_users) + sum(len(v) for v in xray_lines_by_proto.values())
     if total_online == 0:
         return None
 
@@ -214,18 +263,25 @@ async def build_online_report() -> str | None:
 
     if ssh_users:
         lines.append("<b>Users Login SSH</b>")
-        for uname, n in ssh_users:
-            lines.append(f"{html.escape(uname)} {n} PID")
+        for uname in ssh_users:
+            lines.append(f"{html.escape(uname)} {len([s for s in ssh_sess[uname]])} PID")
         lines.append("")
 
-    if xray_users:
-        lines.append("<b>Users Login Xray</b>")
-        for uname, n in xray_users:
-            lines.append(f"{html.escape(uname)} {n} IP")
-        lines.append("")
+    proto_label = {"vmess": "Users Login VMESS", "vless": "Users Login VLESS", "trojan": "Users Login TROJAN"}
+    for proto in ("vmess", "vless", "trojan"):
+        if xray_lines_by_proto.get(proto):
+            lines.append(f"<b>{proto_label[proto]}</b>")
+            lines.extend(xray_lines_by_proto[proto])
+            lines.append("")
 
     lines.append(f"<b>Total : {total_online}</b>")
     return "\n".join(lines)
+
+
+def _xray_port_for(proto: str) -> int:
+    """Port inbound xray per protokol (dari tag konvensi installer)."""
+    port_map = {"vmess": 10007, "vless": 10004, "trojan": 10001}
+    return port_map.get(proto, 10004)
 
 
 async def send_online_report(bot: Bot) -> bool:
