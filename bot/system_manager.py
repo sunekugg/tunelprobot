@@ -672,6 +672,9 @@ async def send_account_topic_notification(
 ):
     try:
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        # Toggle notif pembuatan akun ke topic
+        if (await get_setting("notif_create_account")) != "1":
+            return
         if (await get_setting("notif_topic_enabled")) != "1":
             return
         grp_id_str = (await get_setting("notif_group_id") or "").strip()

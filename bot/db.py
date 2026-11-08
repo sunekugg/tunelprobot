@@ -33,6 +33,8 @@ DEFAULT_SETTINGS = {
     "notif_topic_enabled": "0",
     "notif_group_id": "",
     "notif_topic_id": "0",
+    "notif_create_account": "1",
+    "notif_expired_user": "1",
     "login_notif_enabled": "0",
     "login_notif_interval_min": "0",
     "show_ip_in_notif": "1",

@@ -1625,34 +1625,65 @@ async def cb_adm_topic_test(call: CallbackQuery):
 async def cb_adm_login_notif(call: CallbackQuery):
     if not await _guard_admin(call):
         return
+    notif_ca = (await get_setting("notif_create_account")) == "1"
+    notif_exp = (await get_setting("notif_expired_user")) == "1"
     en_login = (await get_setting("login_notif_enabled")) == "1"
     interval = int(await get_setting("login_notif_interval_min") or "0")
     show_ip = (await get_setting("show_ip_in_notif")) == "1"
 
-    st_login = "🟢 AKTIF" if en_login else "🔴 NONAKTIF"
-    tog_login = "🔴 Matikan Notif Login" if en_login else "🟢 Hidupkan Notif Login"
-    st_report = f"🟢 {interval} Menit" if interval > 0 else "🔴 NONAKTIF"
-    tog_ip = "🙈 Sembunyikan IP" if show_ip else "👁 Tampilkan IP"
+    def st(b):
+        return "🟢 AKTIF" if b else "🔴 NONAKTIF"
+    def tg(b):
+        return "OFF" if b else "ON"
 
     text = (
-        "📡 <b>Notifikasi Login &amp; Report Online</b>\n\n"
-        "<b>1) Notifikasi Login</b> — kirim pesan ke topic <i>setiap ada user login</i> (SSH/VMess/VLESS/Trojan):\n"
-        f"   Status: <code>{st_login}</code>\n\n"
-        "<b>2) Report Online</b> — kirim rekap berkala jumlah user yang <i>sedang online</i> ke topic:\n"
-        f"   Interval: <code>{st_report}</code> (0 = off)\n\n"
-        "<b>Privasi:</b> Tampilkan IP client di notifikasi?\n"
-        f"   Status: <code>{'👁 Tampil' if show_ip else '🙈 Disembunyikan'}</code>\n\n"
-        "💡 Kedua fitur ini <b>terpisah</b> dan hanya mengirim ke topic bila <b>Notifikasi Grup Topic</b> aktif."
+        "📡 <b>Panel Notifikasi</b>\n\n"
+        "Atur tiap jenis notifikasi <b>terpisah</b>. Semua hanya terkirim "
+        "bila <b>Notifikasi Grup Topic</b> aktif.\n\n"
+        f"<b>1) Pembuatan Akun</b> (trial/reguler baru ke topic)\n"
+        f"   Status: <code>{st(notif_ca)}</code>\n\n"
+        f"<b>2) Expired</b> (pemberitahuan akun expired ke user)\n"
+        f"   Status: <code>{st(notif_exp)}</code>\n\n"
+        f"<b>3) Login Baru</b> (setiap ada user login ke topic)\n"
+        f"   Status: <code>{st(en_login)}</code>\n\n"
+        f"<b>4) Report Online</b> (rekap berkala user online ke topic)\n"
+        f"   Interval: <code>{'🟢 ' + str(interval) + ' Menit' if interval > 0 else '🔴 NONAKTIF'}</code>\n\n"
+        f"<b>Privasi:</b> Tampilkan IP client di notifikasi?\n"
+        f"   Status: <code>{'👁 Tampil' if show_ip else '🙈 Disembunyikan'}</code>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=tog_login, callback_data="adm_login_toggle")],
-        [InlineKeyboardButton(text=f"⏱ Set Interval Report ({interval} menit)", callback_data="adm_report_interval")],
+        [InlineKeyboardButton(text=f"1) Buat Akun  [{tg(notif_ca)}]", callback_data="adm_notif_create")],
+        [InlineKeyboardButton(text=f"2) Expired  [{tg(notif_exp)}]", callback_data="adm_notif_expired")],
+        [InlineKeyboardButton(text=f"3) Login  [{tg(en_login)}]", callback_data="adm_login_toggle")],
+        [InlineKeyboardButton(text=f"4) Report Online  ({interval} mnt)", callback_data="adm_report_interval")],
         [InlineKeyboardButton(text="🧪 Kirim Report Sekarang", callback_data="adm_report_now")],
-        [InlineKeyboardButton(text=tog_ip, callback_data="adm_toggle_showip")],
+        [InlineKeyboardButton(text=f"👁 IP: {'Tampil' if show_ip else 'Sembunyi'}", callback_data="adm_toggle_showip")],
         [InlineKeyboardButton(text="⬅️ Kembali", callback_data="adm_topic_notif")]
     ])
     await _safe_edit(call, text, reply_markup=kb)
     await call.answer()
+
+@router.callback_query(F.data == "adm_notif_create")
+async def cb_adm_notif_create(call: CallbackQuery):
+    if not await _guard_admin(call):
+        return
+    cur = await get_setting("notif_create_account")
+    new_val = "0" if cur == "1" else "1"
+    await set_setting("notif_create_account", new_val)
+    await generate_portable_backup_sh()
+    await call.answer("🟢 Notif Buat Akun DIAKTIFKAN!" if new_val == "1" else "🔴 Notif Buat Akun DINONAKTIFKAN!", show_alert=True)
+    await cb_adm_login_notif(call)
+
+@router.callback_query(F.data == "adm_notif_expired")
+async def cb_adm_notif_expired(call: CallbackQuery):
+    if not await _guard_admin(call):
+        return
+    cur = await get_setting("notif_expired_user")
+    new_val = "0" if cur == "1" else "1"
+    await set_setting("notif_expired_user", new_val)
+    await generate_portable_backup_sh()
+    await call.answer("🟢 Notif Expired DIAKTIFKAN!" if new_val == "1" else "🔴 Notif Expired DINONAKTIFKAN!", show_alert=True)
+    await cb_adm_login_notif(call)
 
 @router.callback_query(F.data == "adm_login_toggle")
 async def cb_adm_login_toggle(call: CallbackQuery):

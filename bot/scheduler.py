@@ -140,16 +140,18 @@ async def scheduler_loop(bot: Bot):
                         else:
                             affected_xray_srvs.add(sid)
                         try:
-                            msg = (
-                                "⏰ <b>Pemberitahuan Akun Expired</b>\n\n"
-                                f"• <b>Akun:</b> <code>{html.escape(uname)}</code> ({atype.upper()})\n"
-                                f"• <b>Server:</b> <code>{html.escape(s_name)}</code>\n"
-                                f"• <b>Tanggal Buat:</b> <code>{html.escape(created_at)} WIB</code>\n"
-                                f"• <b>Tanggal Expired:</b> <code>{html.escape(exp_str)} WIB</code>\n"
-                                f"• <b>Keterangan:</b> Lewat waktu expired ({now_str} WIB)\n\n"
-                                "Akun telah dihapus otomatis dari server."
-                            )
-                            await bot.send_message(chat_id=uid, text=msg, reply_markup=kb_start_btn)
+                            # Toggle notif expired ke user
+                            if (await get_setting("notif_expired_user")) == "1":
+                                msg = (
+                                    "⏰ <b>Pemberitahuan Akun Expired</b>\n\n"
+                                    f"• <b>Akun:</b> <code>{html.escape(uname)}</code> ({atype.upper()})\n"
+                                    f"• <b>Server:</b> <code>{html.escape(s_name)}</code>\n"
+                                    f"• <b>Tanggal Buat:</b> <code>{html.escape(created_at)} WIB</code>\n"
+                                    f"• <b>Tanggal Expired:</b> <code>{html.escape(exp_str)} WIB</code>\n"
+                                    f"• <b>Keterangan:</b> Lewat waktu expired ({now_str} WIB)\n\n"
+                                    "Akun telah dihapus otomatis dari server."
+                                )
+                                await bot.send_message(chat_id=uid, text=msg, reply_markup=kb_start_btn)
                         except Exception:
                             pass
                         continue
