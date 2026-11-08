@@ -195,9 +195,9 @@ async def _get_online_xray_by_proto() -> dict[str, dict[str, set[str]]]:
     if not xray_users:
         return {}
     # IP HP asli dari realip.log. WebSocket VPN connect sekali (status 101),
-    # traffic selanjutnya tak menulis log — window lebar (15 menit) supaya
-    # user yang online terus tetap terhitung IP-nya.
-    hap_ips = get_haproxy_client_ips(window_seconds=900).get("clients", set())
+    # traffic selanjutnya tak menulis log baru — window lebar (2 jam) supaya
+    # user yang online lama tetap terhitung IP-nya.
+    hap_ips = get_haproxy_client_ips(window_seconds=7200).get("clients", set())
 
     by_proto: dict[str, dict[str, set[str]]] = {"vmess": {}, "vless": {}, "trojan": {}}
     try:
@@ -244,7 +244,6 @@ async def build_online_report() -> str | None:
     """
     ssh_sess = get_ssh_active_sessions()
     xray_by_proto = await _get_online_xray_by_proto()
-    used_map = await _get_used_bytes_map()
 
     acc_map = await _get_all_accounts_map()
 
@@ -261,10 +260,7 @@ async def build_online_report() -> str | None:
             if uname not in acc_map:
                 continue
             n = len(ips)
-            used_gb = used_map.get(uname, 0) / (1024**3)
-            used_s = f"{used_gb:.1f}GB" if used_gb >= 0.01 else "0.0GB"
-            port = _xray_port_for(proto)
-            xray_lines_by_proto.setdefault(proto, []).append(f"{html.escape(uname)} {used_s} {n}IP | {port}")
+            xray_lines_by_proto.setdefault(proto, []).append(f"{html.escape(uname)} {n}IP")
         xray_lines_by_proto[proto] = sorted(xray_lines_by_proto.get(proto, []))
 
     total_online = len(ssh_users) + sum(len(v) for v in xray_lines_by_proto.values())
