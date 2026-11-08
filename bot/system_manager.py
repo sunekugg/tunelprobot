@@ -1518,10 +1518,10 @@ def get_haproxy_client_ips(window_seconds: int = 120) -> dict[str, set[str]]:
             m_req = re.search(r'"(?:GET|POST|PUT|ACL) ([^ "]+) HTTP', ln)
             if not m_req:
                 continue
-            path = m_req.group(1)
-            if not re.search(r"/(trojan|vless|vmess|whatever|uptrojan|upvless|upvmess)", path):
-                continue
-            ua = ln.split('" "')[-1] if '" "' in ln else ln.split("HTTP/")[-1] if "HTTP/" in ln else ""
+            ua = ""
+            m_ua = re.search(r'HTTP/\d+\.\d+" \d{3} (.*)$', ln)
+            if m_ua:
+                ua = m_ua.group(1)
             if re.search(r"(Go-http-client|Infrawatch|SearchBot|scanner|bot|crawler|Spider|curl)", ua, re.I):
                 continue
             m_time = re.search(r"\[(\d{2})/(\w{3})/(\d{4}):(\d{2}):(\d{2}):(\d{2}) [+-]\d{4}\]", ln)
