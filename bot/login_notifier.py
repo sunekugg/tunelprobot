@@ -182,22 +182,16 @@ async def _get_used_bytes_map() -> dict[str, int]:
 
 
 async def _get_online_xray_by_proto() -> dict[str, dict[str, set[str]]]:
-    """Protokol → {username → set(ip)} — IP asli dari haproxy.log.
+    """Protokol → {username → set(target_ip)} dari xray access log (window 60s).
 
-    xray di belakang haproxy/nginx selalu melihat 127.0.0.1, jadi target yang
-    diakses user (Google/Telegram/DNS) tak terpakai untuk 'nIP'. IP klien asli
-    hanya ada di haproxy.log ('Connect from <IP>'). Karena haproxy tak mencatat
-    username, jumlah IP user online dihitung dari total koneksi unik di haproxy
-    dan dibagi rata antar user xray yang aktif.
+    realip.log tak memuat username, jadi tak bisa memetakan IP asli → user.
+    Gunakan target IP unik yang diakses user dalam window pendek (60 detik):
+    1 HP browsing menghasilkan 3-8 target unik — angka realistis, bukan 25.
+    Window panjang mendeteksi target lama (DNS/CDN) yang bikin nIP membengkak.
     """
-    # Deteksi user xray yang online (ada trafik di access log window)
-    xray_users = get_xray_active_ips(window_seconds=600)
+    xray_users = get_xray_active_ips(window_seconds=60)
     if not xray_users:
         return {}
-    # IP HP asli dari realip.log. WebSocket VPN connect sekali (status 101),
-    # trafik selanjutnya tak menulis log — window 24 jam supaya IP asli user
-    # tetap terhitung selama koneksi WS-nya belum diulang.
-    hap_ips = get_haproxy_client_ips(window_seconds=86400).get("clients", set())
 
     by_proto: dict[str, dict[str, set[str]]] = {"vmess": {}, "vless": {}, "trojan": {}}
     try:
@@ -208,22 +202,11 @@ async def _get_online_xray_by_proto() -> dict[str, dict[str, set[str]]]:
     except Exception:
         proto_of = {}
 
-    online_users = list(xray_users.keys())
-    n = len(online_users)
-    if n == 0:
-        return {}
-    if n == 1:
-        # 1 user online → semua IP klien asli di haproxy adalah milik user tsb
-        ips_for_solo = set(hap_ips)
-    else:
-        # multi-user: tak bisa dipetakan pasti, tampilkan seluruh IP unik klien
-        ips_for_solo = set(hap_ips)
-
-    for uname in online_users:
+    for uname, target_ips in xray_users.items():
         p = proto_of.get(uname, "vless")
         if p not in by_proto:
             p = "vless"
-        by_proto[p][uname] = set(ips_for_solo)
+        by_proto[p][uname] = set(target_ips)
     return by_proto
 
 
