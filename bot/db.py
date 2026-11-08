@@ -145,6 +145,8 @@ async def init_db():
             )
             await db.commit()
 
+        # Domain lokal TIDAK ditimpa config.env setelah server dibuat,
+        # agar perubahan domain lewat panel admin tetap tersimpan.
         async with db.execute("SELECT COUNT(*) FROM servers WHERE is_local = 1") as cur:
             cnt = (await cur.fetchone())[0]
         if cnt == 0:
@@ -152,8 +154,6 @@ async def init_db():
                 "INSERT INTO servers (id, name, domain, ip, is_local, max_users, is_active) VALUES (1, 'Server Utama', ?, '127.0.0.1', 1, 100, 1)",
                 (DOMAIN,)
             )
-        else:
-            await db.execute("UPDATE servers SET domain = ? WHERE is_local = 1", (DOMAIN,))
 
         await db.execute("""
         CREATE TABLE IF NOT EXISTS creation_history (

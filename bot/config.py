@@ -15,6 +15,14 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0").strip() or 0)
 # Daftar admin tambahan (dipisah koma) selain ADMIN_ID master
 ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()]
 DOMAIN = os.getenv("DOMAIN", "localhost").strip()
+# Prefix otomatis username akun (misal "sunek-"); kosongkan untuk nonaktif
+USERNAME_PREFIX = os.getenv("PREFIKS_USERNAME", "sunek-").strip()
+
+def apply_prefix(name: str) -> str:
+    """Tambahkan USERNAME_PREFIX bila belum ada. Contoh: user -> sunek-user."""
+    if not USERNAME_PREFIX or name.startswith(USERNAME_PREFIX):
+        return name
+    return USERNAME_PREFIX + name
 DB_PATH = os.getenv("DB_PATH", "/root/tgbot-vpn/vpn_bot.db")
 XRAY_CONFIG = os.getenv("XRAY_CONFIG", "/usr/local/etc/xray/config.json")
 XRAY_ACCESS_LOG = os.getenv("XRAY_ACCESS_LOG", "/var/log/xray/access.log")

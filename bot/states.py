@@ -58,6 +58,7 @@ class AdminServerFSM(StatesGroup):
     edit_credentials = State()
     edit_speed_mbps = State()
     edit_quota_gb = State()
+    edit_domain = State()
 
 class AdminPurgeOverlimitFSM(StatesGroup):
     custom_duration = State()

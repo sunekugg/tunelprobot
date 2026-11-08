@@ -252,7 +252,10 @@ async def cb_adm_servers(call: CallbackQuery):
         ])
         btns.append([
             InlineKeyboardButton(text=f"🔄 Reset BW #{s['id']}", callback_data=f"adm_srv_resetbw:{s['id']}"),
-            InlineKeyboardButton(text=f"🔄 On/Off #{s['id']}", callback_data=f"adm_srv_tog:{s['id']}")
+            InlineKeyboardButton(text=f"🔄 On/Off #{s['id']}", callback_data=f"adm_srv_tog:{s['id']}"),
+        ])
+        btns.append([
+            InlineKeyboardButton(text=f"🌐 Ganti Domain #{s['id']}", callback_data=f"adm_srv_domain:{s['id']}"),
         ])
         if not s["is_local"]:
             btns.append([
@@ -559,6 +562,49 @@ async def cb_adm_srv_tog(call: CallbackQuery):
         await db.execute("UPDATE servers SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ?", (sid,))
         await db.commit()
     await cb_adm_servers(call)
+
+@router.callback_query(F.data.startswith("adm_srv_domain:"))
+async def cb_adm_srv_domain(call: CallbackQuery, state: FSMContext):
+    if not await _guard_admin(call):
+        return
+    sid = int(call.data.split(":")[1])
+    srv = await get_server_by_id(sid)
+    if not srv:
+        await call.answer("Server tidak ditemukan.", show_alert=True)
+        return
+    await state.set_state(AdminServerFSM.edit_domain)
+    await state.update_data(edit_server_id=sid)
+    await _safe_edit(
+        call,
+        f"🌐 <b>Ganti Domain Server #{sid} ({html.escape(srv['name'])})</b>\n\n"
+        f"Domain saat ini: <code>{html.escape(srv['domain'])}</code>\n\n"
+        f"Ketik domain baru, contoh:\n<code>clode2.sunekvip.my.id</code>",
+        reply_markup=cancel_kb("admin_panel")
+    )
+    await call.answer()
+
+@router.message(AdminServerFSM.edit_domain)
+async def fsm_srv_edit_domain(message: Message, state: FSMContext):
+    if not await _guard_admin(message):
+        return
+    new_dom = (message.text or "").strip().lower()
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    if not new_dom or any(ch.isspace() for ch in new_dom):
+        await message.answer("❌ <b>Domain tidak valid!</b> Jangan gunakan spasi. Coba lagi.", reply_markup=cancel_kb("admin_panel"))
+        return
+    data = await state.get_data()
+    await state.clear()
+    sid = int(data["edit_server_id"])
+    async with aiosqlite.connect(DB_PATH, timeout=15) as db:
+        await db.execute("UPDATE servers SET domain = ? WHERE id = ?", (new_dom, sid))
+        await db.commit()
+    await generate_portable_backup_sh()
+    await message.answer(
+        f"✅ <b>Domain server #{sid} diganti menjadi:</b> <code>{html.escape(new_dom)}</code>"
+    )
 
 @router.callback_query(F.data.startswith("adm_srv_del:"))
 async def cb_adm_srv_del(call: CallbackQuery):

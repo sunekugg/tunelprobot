@@ -19,7 +19,7 @@ from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from .config import DB_PATH, DOMAIN, RESERVED_USERNAMES, now_wib
+from .config import DB_PATH, DOMAIN, RESERVED_USERNAMES, now_wib, apply_prefix, USERNAME_PREFIX
 from .db import (
     ensure_user, is_user_admin, get_setting, get_effective_limit_ip,
     check_daily_creation_quota, record_account_creation, get_effective_duration, add_log,
@@ -136,7 +136,7 @@ async def cb_picked_server(call: CallbackQuery, state: FSMContext):
         lim_ip = await get_effective_limit_ip(uid)
 
         if proto in ("trojan", "vless", "vmess"):
-            uname = f"trial-{rand_str}"
+            uname = apply_prefix(f"trial-{rand_str}")
             u_uuid = str(uuid.uuid4())
             async with aiosqlite.connect(DB_PATH, timeout=15) as db:
                 await db.execute(
@@ -159,7 +159,7 @@ async def cb_picked_server(call: CallbackQuery, state: FSMContext):
                 text, kb = format_trojan_output(uname, city, isp, s_dom, u_uuid, lim_ip, exp_disp)
                 await _safe_edit(call, text, reply_markup=kb)
         else:
-            uname_ssh = f"trial{rand_str}"
+            uname_ssh = apply_prefix(f"trial{rand_str}")
             pwd_ssh = "".join(random.choices(string.ascii_letters + string.digits, k=6))
             if not await create_ssh_on_server(sid, uname_ssh, pwd_ssh):
                 await _safe_edit(call, "❌ Gagal membuat akun SSH pada server tujuan (Cek koneksi SSH di Panel Admin).", reply_markup=main_menu_kb(await is_user_admin(uid)))
@@ -183,7 +183,8 @@ async def cb_picked_server(call: CallbackQuery, state: FSMContext):
         await _safe_edit(
             call,
             f"🔑 <b>Buat Akun SSH — {html.escape(srv['name'])} ({html.escape(s_dom)})</b>\n\n"
-            "Langkah 1/2: Masukkan <b>Username SSH</b>:\n• Hanya huruf kecil dan angka (<code>a-z0-9</code>), 3 - 16 karakter",
+            f"Langkah 1/2: Masukkan <b>Username SSH</b>:\n• Hanya huruf kecil dan angka (<code>a-z0-9</code>), 3 - 16 karakter\n"
+            f"• Prefix <code>{USERNAME_PREFIX}</code> ditambahkan otomatis (misal <code>abc</code> → <code>{USERNAME_PREFIX}abc</code>)",
             reply_markup=cancel_kb()
         )
         await call.answer()
@@ -195,7 +196,8 @@ async def cb_picked_server(call: CallbackQuery, state: FSMContext):
         await _safe_edit(
             call,
             f"🔐 <b>Buat Akun {proto.upper()} — {html.escape(srv['name'])} ({html.escape(s_dom)})</b>\n\n"
-            "Masukkan nama akun (<b>remarks</b>):\n• Huruf kecil, angka, atau strip (<code>a-z0-9-</code>), 3 - 16 karakter",
+            f"Masukkan nama akun (<b>remarks</b>):\n• Huruf kecil, angka (<code>a-z0-9</code>), 3 - 16 karakter\n"
+            f"• Prefix <code>{USERNAME_PREFIX}</code> ditambahkan otomatis (misal <code>abc</code> → <code>{USERNAME_PREFIX}abc</code>)",
             reply_markup=cancel_kb()
         )
         await call.answer()
@@ -211,10 +213,12 @@ async def fsm_xray_remark(message: Message, state: FSMContext):
     proto = data.get("proto", "vless")
     sid = int(data.get("server_id", 1))
     s_dom = data.get("server_domain", DOMAIN)
-    remark = (message.text or "").strip().lower()
-    if not re.match(r"^[a-z0-9-]{3,16}$", remark):
-        await message.answer("❌ <b>Format nama akun tidak valid!</b> Gunakan <code>a-z</code>, <code>0-9</code>, atau <code>-</code> (3-16 karakter):", reply_markup=cancel_kb())
+    # user ketik tanpa prefix; bot tambahkan prefix otomatis
+    raw_remark = (message.text or "").strip().lower()
+    if not re.match(r"^[a-z0-9]{3,16}$", raw_remark):
+        await message.answer("❌ <b>Format nama akun tidak valid!</b> Gunakan huruf kecil & angka (3-16 karakter):", reply_markup=cancel_kb())
         return
+    remark = apply_prefix(raw_remark)
 
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
         async with db.execute("SELECT 1 FROM accounts WHERE username = ?", (remark,)) as cur:
@@ -277,10 +281,12 @@ async def fsm_ssh_username(message: Message, state: FSMContext):
         await message.answer("⏱ Waktu input habis (timeout 2 menit).", reply_markup=main_menu_kb(await is_user_admin(message.from_user.id)))
         return
 
-    uname = (message.text or "").strip().lower()
-    if not re.match(r"^[a-z0-9]{3,16}$", uname):
+    # user ketik tanpa prefix; bot tambahkan prefix otomatis
+    raw_uname = (message.text or "").strip().lower()
+    if not re.match(r"^[a-z0-9]{3,16}$", raw_uname):
         await message.answer("❌ <b>Username tidak valid!</b> Gunakan huruf kecil dan angka (3-16 karakter):", reply_markup=cancel_kb())
         return
+    uname = apply_prefix(raw_uname)
     if uname in RESERVED_USERNAMES or system_user_exists(uname):
         await message.answer("❌ Username tersebut tidak diizinkan atau sudah terdaftar:", reply_markup=cancel_kb())
         return
