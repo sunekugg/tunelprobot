@@ -195,9 +195,9 @@ async def _get_online_xray_by_proto() -> dict[str, dict[str, set[str]]]:
     if not xray_users:
         return {}
     # IP HP asli dari realip.log. WebSocket VPN connect sekali (status 101),
-    # traffic selanjutnya tak menulis log baru — window lebar (2 jam) supaya
-    # user yang online lama tetap terhitung IP-nya.
-    hap_ips = get_haproxy_client_ips(window_seconds=7200).get("clients", set())
+    # trafik selanjutnya tak menulis log — window 24 jam supaya IP asli user
+    # tetap terhitung selama koneksi WS-nya belum diulang.
+    hap_ips = get_haproxy_client_ips(window_seconds=86400).get("clients", set())
 
     by_proto: dict[str, dict[str, set[str]]] = {"vmess": {}, "vless": {}, "trojan": {}}
     try:
