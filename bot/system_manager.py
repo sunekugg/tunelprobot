@@ -1515,7 +1515,8 @@ def get_haproxy_client_ips(window_seconds: int = 120) -> dict[str, set[str]]:
             #     Infrawatch/Claude-SearchBot/client dll)
             if '" 101 ' not in ln:
                 continue
-            ua = ln.split('" "')[-1] if '" "' in ln else ""
+            m_ua = re.search(r'HTTP/\d+\.\d+" \d{3} (.*)$', ln)
+            ua = m_ua.group(1) if m_ua else ""
             if re.search(r"(Go-http-client|Infrawatch|SearchBot|scanner|bot|crawler|Spider|curl)", ua, re.I):
                 continue
             m_time = re.search(r"\[(\d{2})/(\w{3})/(\d{4}):(\d{2}):(\d{2}):(\d{2}) [+-]\d{4}\]", ln)
