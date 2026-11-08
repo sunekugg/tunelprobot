@@ -39,7 +39,13 @@ cmd_delete() {
   local u="$1"
   # Hanya hapus user di bawah /home/bot (jangan sentuh user sistem).
   if id "$u" >/dev/null 2>&1 && [ "$(getent passwd "$u" | cut -d: -f6)" = "$BOT_HOME/$u" ]; then
-    userdel -r "$u" 2>/dev/null || userdel "$u"
+    # bunuh sesi aktif user dulu supaya userdel tidak gagal
+    pkill -u "$u" 2>/dev/null || true
+    sleep 1
+    userdel -r "$u" 2>/dev/null || userdel "$u" || true
+    if id "$u" >/dev/null 2>&1; then
+      echo "❌ user $u masih digunakan proses"; exit 1
+    fi
     log "user $u dihapus"
     echo "OK"
   else
