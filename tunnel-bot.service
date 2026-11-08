@@ -9,8 +9,7 @@ WorkingDirectory=/opt/tunnel-bot
 Restart=always
 RestartSec=5
 Environment=TZ=Asia/Jakarta
-ProtectSystem=full
-ReadWritePaths=/etc/tunnel-bot /var/log
+ReadWritePaths=/etc/tunnel-bot /var/log /usr/local/etc/xray /etc
 
 [Install]
 WantedBy=multi-user.target
