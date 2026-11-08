@@ -1390,13 +1390,16 @@ def _read_ps_user_maps() -> tuple[dict[str, str], dict[str, list[str]]]:
     ppid_children_map: dict[str, list[str]] = {}
     try:
         out = subprocess.check_output(
-            ["ps", "-eo", "pid=,ppid=,user=,args="], text=True, stderr=subprocess.DEVNULL, timeout=5
+            ["ps", "-eo", "pid=,ppid=,user:32=,args="], text=True, stderr=subprocess.DEVNULL, timeout=5
         )
         for pline in out.splitlines():
             parts = pline.strip().split(None, 3)
             if len(parts) < 3:
                 continue
-            p_id, pp_id, p_usr = parts[0], parts[1], parts[2]
+            p_id, pp_id, p_usr = parts[0], parts[1], parts[2].strip()
+            # ps user:32 masih bisa berakhir '+' kalau >32 char (jarang) — tolak
+            if p_usr.endswith("+"):
+                p_usr = p_usr[:-1]
             p_args = parts[3] if len(parts) > 3 else ""
             resolved = ""
             if p_usr not in _SYS_USERS:
