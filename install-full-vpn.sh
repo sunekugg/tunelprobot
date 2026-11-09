@@ -84,61 +84,72 @@ wait_apt; apt-get install -y git curl wget jq socat cron net-tools lsof iproute2
   sqlite3 tzdata build-essential zlib1g-dev libssl-dev bzip2 unzip ca-certificates \
   >>"$LOG" 2>&1
 
-log "=== [3/9] Compile Dropbear 2019 (port 90) ==="
-if ! /usr/local/sbin/dropbear -V 2>&1 | grep -q "2019.78"; then
-  mkdir -p /tmp/drop && cd /tmp/drop && rm -rf ./*
-  curl -fsSL "https://matt.ucc.asn.au/dropbear/releases/dropbear-2019.78.tar.bz2" -o d.tar.bz2 \
-    || curl -fsSL "https://dropbear.nl/mirror/releases/dropbear-2019.78.tar.bz2" -o d.tar.bz2 \
-    || die "Gagal unduh Dropbear source"
-  tar -xjf d.tar.bz2 && cd dropbear-2019.78
-  CFLAGS="-O2 -Wno-error" ./configure --prefix=/usr/local --sysconfdir=/etc/dropbear >>"$LOG" 2>&1 \
-    || die "Dropbear configure gagal (cek $LOG)"
-  make -j"$(nproc)" >>"$LOG" 2>&1 || die "Dropbear make gagal (cek $LOG)"
-  make install >>"$LOG" 2>&1 || log "make install peringatan (lanjut)"
-  [ -x /usr/local/sbin/dropbear ] || die "dropbear binary tak terpasang (compile gagal, cek $LOG)"
-fi
-mkdir -p /etc/dropbear && chmod 700 /etc/dropbear
-# VPS baru sering entropi rendah -> dropbearkey RSA 2048 bisa hang/error.
-# Pastikan sumber entropi cepat tersedia (haveged) sebelum membuat host key.
-apt-get install -y haveged >>"$LOG" 2>&1 || true
-systemctl enable --now haveged >/dev/null 2>&1 || true
-[ -f /etc/dropbear/dropbear_rsa_host_key ] || /usr/local/sbin/dropbearkey -t rsa -s 2048 -f /etc/dropbear/dropbear_rsa_host_key >>"$LOG" 2>&1 || log "RSA host key gagal (pakai fallback)"
-[ -f /etc/dropbear/dropbear_ed25519_host_key ] || /usr/local/sbin/dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >>"$LOG" 2>&1 || log "ed25519 host key gagal (pakai fallback)"
-# Fallback: host key bawaan (dibuat di server build) — dipakai bila dropbearkey
-# crash/hang di VPS bermasalah (entropi rendah). Host key hanya identitas server;
-# aman dikirim di dalam installer (bukan kredensial user).
-if [ ! -s /etc/dropbear/dropbear_ed25519_host_key ] || [ ! -s /etc/dropbear/dropbear_rsa_host_key ]; then
-  log "pakai fallback host key bawaan"
-  BASE64_DHK="H4sIAAAAAAAAA0vJjk9NMTI1NbRkoBkwAAIzAwMwbYBJGxgaGTMYmhqZmxgbGRmYAMUNDQ2NzRgUDGjnJAQoLS5JLFJQYCjKzy/Bp46Q/NAF3MXFGbqIROBQ+vRt7s4ezgVGP2seaU83ue3ZfOHXUm/HJxoXQsqv6PXbM1/ilFD/++bH4cXTYmZ8fV6/xUmg4Z3e1Y7Xa+Z+DFd/3TTQ/hkFJICU7Pii4kTa2kEg/xuamJii5X8Dc2PT0fxPJ8AOyv+QRMDMyMDIwMDIyNCevGmDhfdbt5cT1fXKzu/ma5nl9/G1nm6eR9mN1DWzHl/e+bRp5vTbDXPP5IceE3F9nFymLdNir7tViXuKNN9jt8sLJi0t4Jv0i1nf2meVWFRsxOGLVQs/dOjN5oicva+aWXdS2fvy1+Ylh046SFVaZn7Q/5R0pLNEQenXvTXHt0y6YDCL73n5BKH77JbdJSxdjW1L/1xO4ZFx+/FiTvD9qpo1BlEnJj4SvFG++/Wslow/QpLaf1Ur177m+yokmv9ggvq0juxtf+Wu+DneYWZOjDf+MOvaoXm5Ju8qPuYdUd3mec7hdpxwnaiNcfDNbR6FGwVX2tmlnrft29NpMDl+ZbCZS+WxmfVsl2M8pgIDgYHNKXBNRURF5Yf/a0q4Tpp+bHywb4btnZddkgyZEqss170o7M3bHrZAoWOn3XGRmAAWdZXOOVH/WTw0QqSq09ufL7b4415xpvHF/jW8ErknnwU8P+Fzi6m58BdfnaSFcTTntUk3dJe7X/gh8Lxs/TL9OmO95ZeP5Z5nOlLQlxYfVXO7IevCstRvHApxv7Jl+9ZZmQX9FxRMP2RXZsZ+9tbH1+4ZNdbRLtppH30qzl2Krb0q4vwnv/jdOvUovWSx9qZ/rz4cXJxVUL1D8s/5LVPYrV8uePKxO/TInK7Zn5j+u0+rjPMtW63YGBRzmcXrL7tj45n/1zmVFq/iqxA+syGx596hSyuMfk5XX5CyEZgeGhlOLLE9fVj+esrF9FvHfoSof7CbfuXN6ePRUj9Nj3Pylk3sEPZXvv5J8dqVtG3MnincmQ4qa+1SnvztXDv9seXVP/+iQ5tfzXug99MxY+cWiR1pakFfeCNm/6g7+vf46Qn7Pix+zVr5NXp3i/XXPsU5Eo7FXm3P6nLki/a/5foY3qvNYyO+TI4Z7Ig1+3p/nFoyf4Yf1/IJd/Q2ci/a9Ey+f5nz8/4V942vFexsj97nrc77qJP50L/NLbuVWtXOz1Tby3XcK7g8ykll24sjkn/ipF/ME/t1zcJp1h/O16GqNVyrS6yjBXgEVKeFsR4uVNCfuDhx+ouw3r8XzLo13QR3bN2Sa6j4yVXkWdu+7hQB9fYBzqCjYBSMglEwCkbBKBgFo2AUjIJRMApGwSgYBaNgFIyCUTAKRsEoGAWjYBSMglEwCkYBIQAA+ddfFAAoAAA="
-  echo "$BASE64_DHK" | base64 -d | tar xzf - -C /etc/dropbear/
-  # rename ke nama yang Dropbear cari (file fallback = dk_rsa / dk_ed25519)
-  [ -f /etc/dropbear/dk_rsa ]       && cp /etc/dropbear/dk_rsa       /etc/dropbear/dropbear_rsa_host_key
-  [ -f /etc/dropbear/dk_ed25519 ]   && cp /etc/dropbear/dk_ed25519   /etc/dropbear/dropbear_ed25519_host_key
-  chmod 600 /etc/dropbear/dropbear_*_host_key 2>/dev/null || true
-  rm -f /etc/dropbear/dk_rsa /etc/dropbear/dk_ed25519
-fi
-# Buat ExecStart hanya sebut host key yang BENAR-BENAR ada (mencegah
-# 'Too many hostkeys' / key hilang saat restart/re-install).
-DHK_R="-r /etc/dropbear/dropbear_rsa_host_key"
-DHK_E="-r /etc/dropbear/dropbear_ed25519_host_key"
-[ -s /etc/dropbear/dropbear_rsa_host_key ]     || DHK_R=""
-[ -s /etc/dropbear/dropbear_ed25519_host_key ] || DHK_E=""
-cat > /etc/systemd/system/dropbear.service <<UNIT
+log "=== [3/9] Compile Dropbear 2019 (port 90/109/143) ==="
+# Metode TERUJI (nyala di VPS Ubuntu 22.04):
+#  - CFLAGS '-fcommon' WAJIB (GCC11+ default -fno-common membuat binary rusak).
+#  - dropbear 2019 TIDAK support ed25519 -> pakai rsa + ecdsa.
+#  - binary di /usr/sbin, Type=simple, log ke /var/log/dropbear.log.
+cat > /root/install-dropbear.sh <<'DROPBEAR_SH'
+#!/usr/bin/env bash
+export DEBIAN_FRONTEND=noninteractive
+echo "[1/4] Membuka kunci APT & instal paket pendukung..."
+systemctl stop apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service >/dev/null 2>&1 || true
+killall -9 apt apt-get dpkg unattended-upgr >/dev/null 2>&1 || true
+rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend
+dpkg --configure -a --force-confdef --force-confold >/dev/null 2>&1 || true
+apt-get update -y
+apt-get install -y wget bzip2 build-essential zlib1g-dev psmisc dropbear >/dev/null 2>&1
+apt-get install -y libcrypt-dev >/dev/null 2>&1 || true
+
+echo "[2/4] Mengunduh & kompilasi Dropbear v2019.78..."
+cd /tmp && rm -rf dropbear-2019.78*
+wget -q --timeout=15 "https://matt.ucc.asn.au/dropbear/releases/dropbear-2019.78.tar.bz2" -O dropbear-2019.78.tar.bz2 || \
+wget -q --timeout=15 "https://dropbear.nl/mirror/releases/dropbear-2019.78.tar.bz2" -O dropbear-2019.78.tar.bz2
+tar -xjf dropbear-2019.78.tar.bz2 && cd dropbear-2019.78
+./configure CFLAGS="-O2 -fcommon -Wno-error -Wno-unused-result" --prefix=/usr --sysconfdir=/etc/dropbear >/dev/null 2>&1
+make PROGRAMS="dropbear dbclient dropbearkey dropbearconvert scp" -j2 >/dev/null 2>&1
+systemctl stop dropbear >/dev/null 2>&1 || true
+killall -9 dropbear >/dev/null 2>&1 || true
+rm -f /etc/init.d/dropbear
+cp -f dropbear /usr/sbin/dropbear
+cp -f dbclient dropbearkey dropbearconvert /usr/bin/
+chmod +x /usr/sbin/dropbear /usr/bin/dropbearkey
+apt-mark hold dropbear dropbear-bin >/dev/null 2>&1 || true
+cd /root && rm -rf /tmp/dropbear-2019.78*
+
+echo "[3/4] Menyiapkan kunci host, shell & banner..."
+mkdir -p /etc/dropbear
+[[ -f /etc/dropbear/dropbear_rsa_host_key ]] || /usr/bin/dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key >/dev/null 2>&1
+[[ -f /etc/dropbear/dropbear_ecdsa_host_key ]] || /usr/bin/dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key >/dev/null 2>&1
+grep -q "^/bin/false$" /etc/shells || echo "/bin/false" >> /etc/shells
+touch /var/log/dropbear.log && chmod 666 /var/log/dropbear.log
+
+echo "[4/4] Mengaktifkan service Dropbear (port 90/109/143)..."
+cat << 'EOSVC' > /etc/systemd/system/dropbear.service
 [Unit]
-Description=Dropbear SSH (2019) - port 90/109
+Description=Dropbear SSH Server v2019.78
 After=network.target
 [Service]
-Type=forking
-ExecStart=/usr/local/sbin/dropbear -EF -p 90 -p 109 -b /etc/dropbear/issue.net -W 65536 $DHK_R $DHK_E
+Type=simple
+ExecStart=/usr/sbin/dropbear -EF -p 90 -p 109 -p 143 -W 65536 -b /etc/issue.net -r /etc/dropbear/dropbear_rsa_host_key -r /etc/dropbear/dropbear_ecdsa_host_key
+StandardOutput=append:/var/log/dropbear.log
+StandardError=append:/var/log/dropbear.log
+KillMode=process
 Restart=always
 RestartSec=2
 [Install]
 WantedBy=multi-user.target
-UNIT
-echo "Selamat datang di server VPN" > /etc/dropbear/issue.net 2>/dev/null || true
+EOSVC
 systemctl daemon-reload
-systemctl enable dropbear >/dev/null 2>&1 || true
-systemctl restart dropbear || log "dropbear start gagal (cek port 90/109)"
+systemctl unmask dropbear >/dev/null 2>&1 || true
+systemctl enable --now dropbear
+systemctl restart dropbear
+echo "Dropbear : $(/usr/sbin/dropbear -V 2>&1 | head -n1) | status=$(systemctl is-active dropbear)"
+DROPBEAR_SH
+chmod +x /root/install-dropbear.sh
+bash /root/install-dropbear.sh 2>&1 | tee -a "$LOG" || log "dropbear installer ada peringatan (cek $LOG)"
+[ -x /usr/sbin/dropbear ] || die "dropbear binary tak terpasang (cek $LOG)"
+echo "Selamat datang di server VPN" > /etc/issue.net 2>/dev/null || true
 
 log "=== [4/9] Restore konfigurasi live dari snapshot ==="
 mkdir -p /tmp/snap && cd /tmp/snap && rm -rf ./*
