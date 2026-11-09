@@ -81,7 +81,7 @@ log "=== [2/9] Install dependency dasar ==="
 wait_apt; apt-get update -y >>"$LOG" 2>&1
 wait_apt; apt-get install -y git curl wget jq socat cron net-tools lsof iproute2 \
   iptables vnstat haproxy nginx openssl uuid-runtime python3 python3-venv python3-pip \
-  sqlite3 tzdata build-essential zlib1g-dev libssl-dev bzip2 \
+  sqlite3 tzdata build-essential zlib1g-dev libssl-dev bzip2 unzip ca-certificates \
   >>"$LOG" 2>&1
 
 log "=== [3/9] Compile Dropbear 2019 (port 90) ==="
@@ -96,8 +96,12 @@ if ! /usr/local/sbin/dropbear -V 2>&1 | grep -q "2019.78"; then
   make -j"$(nproc)" >>"$LOG" 2>&1 && make install >>"$LOG" 2>&1
 fi
 mkdir -p /etc/dropbear && chmod 700 /etc/dropbear
-[ -f /etc/dropbear/dropbear_rsa_host_key ] || /usr/local/sbin/dropbearkey -t rsa -s 2048 -f /etc/dropbear/dropbear_rsa_host_key >/dev/null 2>&1
-[ -f /etc/dropbear/dropbear_ed25519_host_key ] || /usr/local/sbin/dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >/dev/null 2>&1
+# VPS baru sering entropi rendah -> dropbearkey RSA 2048 bisa hang/error.
+# Pastikan sumber entropi cepat tersedia (haveged) sebelum membuat host key.
+apt-get install -y haveged >>"$LOG" 2>&1 || true
+systemctl enable --now haveged >/dev/null 2>&1 || true
+[ -f /etc/dropbear/dropbear_rsa_host_key ] || /usr/local/sbin/dropbearkey -t rsa -s 2048 -f /etc/dropbear/dropbear_rsa_host_key >>"$LOG" 2>&1 || log "RSA host key gagal (lanjut, ed25519 cukup)"
+[ -f /etc/dropbear/dropbear_ed25519_host_key ] || /usr/local/sbin/dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >>"$LOG" 2>&1 || log "ed25519 host key gagal"
 cat > /etc/systemd/system/dropbear.service <<UNIT
 [Unit]
 Description=Dropbear SSH (2019) - port 90/109
