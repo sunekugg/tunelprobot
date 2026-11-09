@@ -248,8 +248,10 @@ async def fsm_xray_remark(message: Message, state: FSMContext):
     exp_str = (now_dt + td).strftime("%Y-%m-%d %H:%M:%S") if td else "Unlimited"
     exp_disp = format_expired_display(exp_str, is_trial=0)
     lim_ip = await get_effective_limit_ip(uid)
+    # Speed default akun = speed batas VPS tujuan (per-server), fallback ke setting global.
+    srv_row = await get_server_by_id(sid)
     def_q = float(await get_setting("default_quota_gb") or 0)
-    def_spd = int(await get_setting("default_speed_mbps") or 0)
+    def_spd = int((srv_row.get("speed_mbps") if srv_row else 0) or 0) or int(await get_setting("default_speed_mbps") or 0)
 
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
         await db.execute(
@@ -353,8 +355,10 @@ async def cb_confirm_ssh(call: CallbackQuery, state: FSMContext):
     exp_str = (now_dt + td).strftime("%Y-%m-%d %H:%M:%S") if td else "Unlimited"
     exp_disp = format_expired_display(exp_str, is_trial=0)
     lim_ip = await get_effective_limit_ip(uid)
+    # Speed default akun = speed batas VPS tujuan (per-server), fallback ke setting global.
+    srv_row = await get_server_by_id(sid)
     def_q = float(await get_setting("default_quota_gb") or 0)
-    def_spd = int(await get_setting("default_speed_mbps") or 0)
+    def_spd = int((srv_row.get("speed_mbps") if srv_row else 0) or 0) or int(await get_setting("default_speed_mbps") or 0)
 
     if not await create_ssh_on_server(sid, uname, pwd_val):
         await _safe_edit(call, "❌ Gagal membuat akun SSH pada server tujuan. Hubungi Admin.", reply_markup=main_menu_kb(await is_user_admin(uid)))

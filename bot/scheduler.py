@@ -287,6 +287,42 @@ async def scheduler_loop(bot: Bot):
                         except Exception:
                             pass
 
+            # 4. Penegakan Kuota Bandwidth per-Server (GB)
+            # Total pemakaian server = jumlah used_bytes seluruh akun di server tsb
+            # (sama dgn cara panel statistik menjumlahkannya). Jika melewati
+            # servers.quota_gb (>0), matikan server (is_active=0) agar tak bisa
+            # dibuat akun baru & beri tahu admin. Server =0 berarti Unlimited.
+            srv_rows = await get_servers_with_usage(only_active=False)
+            srv_totals: dict[int, int] = {}
+            async with aiosqlite.connect(DB_PATH, timeout=15) as db:
+                async with db.execute(
+                    "SELECT COALESCE(server_id, 1), SUM(COALESCE(used_bytes, 0)) FROM accounts GROUP BY COALESCE(server_id, 1)"
+                ) as cur:
+                    for r in await cur.fetchall():
+                        srv_totals[int(r[0])] = int(r[1] or 0)
+                for s in srv_rows:
+                    sq = int(s["id"])
+                    srv_quota_gb = float(s.get("quota_gb") or 0)
+                    if srv_quota_gb <= 0:
+                        continue
+                    srv_used = srv_totals.get(sq, 0)
+                    if srv_used >= int(srv_quota_gb * (1024**3)):
+                        await db.execute("UPDATE servers SET is_active = 0 WHERE id = ?", (sq,))
+                        await db.commit()
+                        affected_xray_srvs.add(sq)
+                        try:
+                            await bot.send_message(
+                                chat_id=ADMIN_ID,
+                                text=(
+                                    "🛑 <b>Kuota Bandwidth Server Habis</b>\n\n"
+                                    f"• <b>Server:</b> <code>{html.escape(str(s['name']))}</code>\n"
+                                    f"• <b>Pemakaian:</b> <code>{format_bytes_human(srv_used)} / {srv_quota_gb:g} GB</code>\n\n"
+                                    "Server dimatikan otomatis (tidak bisa menerima akun baru) karena melewati batas kuota bandwidth."
+                                ),
+                            )
+                        except Exception:
+                            pass
+
             for x_sid in affected_xray_srvs:
                 await sync_xray_by_server(x_sid)
 
