@@ -1515,6 +1515,41 @@ def get_xray_active_ips(window_seconds: int = 120) -> dict[str, set[str]]:
     return active
 
 
+def get_xray_conn_counts(window_seconds: int = 120) -> dict[str, int]:
+    """Jumlah koneksi nyata per username dari access.log dalam window.
+
+    Xray single-process (tanpa PID per koneksi); jumlah koneksi accepted adalah
+    proxy paling dekat untuk "jumlah sesi/PID" yang bisa diverifikasi dari log.
+    """
+    counts: dict[str, int] = {}
+    if not os.path.exists(XRAY_ACCESS_LOG):
+        return counts
+    now = datetime.datetime.now()
+    try:
+        with open(XRAY_ACCESS_LOG, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            fsize = f.tell()
+            f.seek(max(0, fsize - 150000), os.SEEK_SET)
+            lines = f.read().decode("utf-8", errors="ignore").splitlines()[-1500:]
+    except Exception:
+        return counts
+    for line in lines:
+        if "email:" not in line or "accepted" not in line:
+            continue
+        m_time = re.match(r"^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})", line)
+        if m_time:
+            try:
+                log_dt = datetime.datetime.strptime(m_time.group(1), "%Y/%m/%d %H:%M:%S")
+                if abs((now - log_dt).total_seconds()) > window_seconds:
+                    continue
+            except Exception:
+                pass
+        m_email = re.search(r"email:\s*([a-zA-Z0-9_-]+)", line)
+        if m_email:
+            counts[m_email.group(1)] = counts.get(m_email.group(1), 0) + 1
+    return counts
+
+
 def get_haproxy_client_ips(window_seconds: int = 120) -> dict[str, set[str]]:
     """IP HP asli user dari /var/log/nginx/realip.log.
 

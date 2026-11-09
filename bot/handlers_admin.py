@@ -37,7 +37,7 @@ from .system_manager import (
     create_ssh_on_server, delete_ssh_on_server, lock_ssh_on_server,
     sync_xray_by_server, update_ssh_banner, sync_banner_all_servers,
     format_bytes_human, set_server_speed_limit, sync_ssh_bw_rules_on_server,
-    get_ssh_active_sessions, get_xray_active_ips, get_server_stats, check_service_status,
+    get_ssh_active_sessions, get_xray_active_ips, get_xray_conn_counts, get_server_stats, check_service_status,
     generate_portable_backup_sh, restore_from_sh_content, send_account_topic_notification
 )
 from .states import (
@@ -679,7 +679,7 @@ async def cb_adm_online(call: CallbackQuery):
     if not await _guard_admin(call):
         return
     ssh_map = get_ssh_active_sessions()
-    xray_map = get_xray_active_ips(120)
+    xray_conn = get_xray_conn_counts(120)
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
         async with db.execute("SELECT id, tg_id, acc_type, username, limit_ip, is_locked FROM accounts ORDER BY acc_type, username") as cur:
             rows = await cur.fetchall()
@@ -690,12 +690,22 @@ async def cb_adm_online(call: CallbackQuery):
     for acc_id, tg_id, acc_type, uname, acc_lim, is_locked in rows:
         eff_lim = await get_effective_limit_ip(tg_id, acc_lim)
         lim_str = "♾ Unlimited" if eff_lim == 0 else f"{eff_lim} IP"
-        ips = {ip for _, ip in ssh_map.get(uname, [])} if acc_type == "ssh" else xray_map.get(uname, set())
-        cnt = len(ips)
-        if cnt > 0 or is_locked:
+        if acc_type == "ssh":
+            sess = ssh_map.get(uname, [])
+            n_pid = len(sess)
+            n_ip = len({ip for _, ip in sess})
+            detail = f"Login: <b>{n_pid} PID | {n_ip} IP</b>" if n_pid else "Login: <b>0</b>"
+            online = n_pid > 0
+        else:
+            # Xray single-process: tanpa PID nyata → jumlah koneksi. Real IP tak
+            # terbaca di xray 26.10.31 (from tetap 127.0.0.1), jadi IP unavailable.
+            n_conn = xray_conn.get(uname, 0)
+            detail = f"Login: <b>{n_conn} PID | IP tidak tersedia</b>" if n_conn else "Login: <b>0</b>"
+            online = n_conn > 0
+        if online or is_locked:
             online_count += 1
             lock_badge = " 🔒[TERKUNCI]" if is_locked else " 🟢[ONLINE]"
-            lines.append(f"• <b>{acc_type.upper()}</b> <code>{uname}</code> (ID: <code>{tg_id}</code>)\n  └ Status:{lock_badge} | Login: <b>{cnt}</b> / {lim_str}")
+            lines.append(f"• <b>{acc_type.upper()}</b> <code>{uname}</code> (ID: <code>{tg_id}</code>)\n  └ Status:{lock_badge} | {detail} / {lim_str}")
             btns.append([InlineKeyboardButton(text=f"⚙️ Kelola: {uname}", callback_data=f"adm_acc_detail:{acc_id}")])
 
     if online_count == 0:

@@ -17,7 +17,7 @@ from aiogram import Bot
 from .config import DB_PATH, DOMAIN, now_wib
 from .db import get_setting, get_servers_with_usage
 from .system_manager import (
-    get_ssh_active_sessions, get_xray_active_ips, get_haproxy_client_ips,
+    get_ssh_active_sessions, get_xray_active_ips, get_xray_conn_counts, get_haproxy_client_ips,
     _CLUSTER_ONLINE_CACHE,
 )
 async def _send_to_topic(bot: Bot, text: str) -> None:
@@ -181,7 +181,7 @@ async def _get_used_bytes_map() -> dict[str, int]:
     return m
 
 
-async def _get_online_xray_by_proto() -> dict[str, dict[str, set[str]]]:
+async def _get_online_xray_by_proto() -> dict[str, dict[str, int]]:
     """Protokol → {username → set(target_ip)} dari xray access log (window 60s).
 
     realip.log tak memuat username, jadi tak bisa memetakan IP asli → user.
@@ -193,7 +193,10 @@ async def _get_online_xray_by_proto() -> dict[str, dict[str, set[str]]]:
     if not xray_users:
         return {}
 
-    by_proto: dict[str, dict[str, set[str]]] = {"vmess": {}, "vless": {}, "trojan": {}}
+    # Xray single-process → proxy "jumlah PID" = koneksi accepted dalam window.
+    conn_counts = get_xray_conn_counts(window_seconds=60)
+
+    by_proto: dict[str, dict[str, int]] = {"vmess": {}, "vless": {}, "trojan": {}}
     try:
         async with aiosqlite.connect(DB_PATH, timeout=15) as db:
             db.row_factory = aiosqlite.Row
@@ -206,10 +209,12 @@ async def _get_online_xray_by_proto() -> dict[str, dict[str, set[str]]]:
         p = proto_of.get(uname, "vless")
         if p not in by_proto:
             p = "vless"
-        # Xray access.log `from` tetap 127.0.0.1 meski nginx kirim X-Real-IP +
-        # trustedXForwardedFor=['X-Real-IP'] (bug v26.10.31). Lapor jujur tanpa
-        # angka palsu; upgrade path: patch xray atau terima dari stream/proxy.
-        by_proto[p][uname] = None
+        # Real IP klien tak tersedia: Xray access.log `from` tetap 127.0.0.1 meski
+        # nginx kirim X-Real-IP + trustedXForwardedFor=['X-Real-IP'] (build v26.10.31).
+        # Kirim (n_conn, None) — jumlah koneksi nyata + IP unavailable. Upgrade path:
+        # xray build yang benar membaca XFF, atau PROXY protocol langsung ke Xray.
+        n_conn = conn_counts.get(uname, 1)
+        by_proto[p][uname] = n_conn
     return by_proto
 
 
@@ -245,14 +250,12 @@ async def build_online_report() -> str | None:
         for uname, ips in m.items():
             if uname not in acc_map:
                 continue
-            if ips is None:
-                xray_lines_by_proto.setdefault(proto, []).append(
-                    f"{html.escape(uname)} IP tidak tersedia"
-                )
-            else:
-                xray_lines_by_proto.setdefault(proto, []).append(
-                    f"{html.escape(uname)} {len(ips)}IP"
-                )
+            n_conn = ips if isinstance(ips, int) else 1
+            # Real IP klien tak terbaca di xray 26.10.31 (from tetap 127.0.0.1),
+            # jadi IP dilaporkan jujur; jumlah koneksi nyata tampil sebagai proxy PID.
+            xray_lines_by_proto.setdefault(proto, []).append(
+                f"{html.escape(uname)} {n_conn} PID | IP tidak tersedia"
+            )
         xray_lines_by_proto[proto] = sorted(xray_lines_by_proto.get(proto, []))
 
     total_online = len(ssh_users) + sum(len(v) for v in xray_lines_by_proto.values())
@@ -272,7 +275,13 @@ async def build_online_report() -> str | None:
     if ssh_users:
         lines.append("<b>Users Login SSH</b>")
         for uname in ssh_users:
-            lines.append(f"{html.escape(uname)} {len([s for s in ssh_sess[uname]])} PID")
+            sess = ssh_sess[uname]
+            n_pid = len(sess)
+            n_ip = len({ip for _, ip in sess})
+            if n_ip == n_pid:
+                lines.append(f"{html.escape(uname)} {n_pid} PID")
+            else:
+                lines.append(f"{html.escape(uname)} {n_pid} PID | {n_ip} IP")
         lines.append("")
 
     proto_label = {"vmess": "Users Login VMESS", "vless": "Users Login VLESS", "trojan": "Users Login TROJAN"}
