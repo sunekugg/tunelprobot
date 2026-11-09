@@ -1533,13 +1533,19 @@ def get_xray_active_ips(window_seconds: int = 120) -> dict[str, set[str]]:
                 if "email:" not in line:
                     continue
                 m_time = re.match(r"^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})", line)
-                if m_time:
-                    try:
-                        log_dt = datetime.datetime.strptime(m_time.group(1), "%Y/%m/%d %H:%M:%S")
-                        if abs((now - log_dt).total_seconds()) > window_seconds:
-                            continue
-                    except Exception:
-                        pass
+                # FAIL-CLOSED: baris access.log Xray itu multi-baris (timestamp hanya
+                # di baris pertama request; baris lanjutan 'accepted' tak ber-timestamp).
+                # Kalau baris tak ber-timestamp dan kita tetap menghitung, baris basi
+                # ikut dihitung online → Xray 'notifikasi padahal offline'. Jadi wajib
+                # ber-timestamp dan dalam window.
+                if not m_time:
+                    continue
+                try:
+                    log_dt = datetime.datetime.strptime(m_time.group(1), "%Y/%m/%d %H:%M:%S")
+                    if abs((now - log_dt).total_seconds()) > window_seconds:
+                        continue
+                except Exception:
+                    continue
                 m_email = re.search(r"email:\s*([a-zA-Z0-9_-]+)", line)
                 # IP client di 'accepted tcp:IP:port' / 'accepted udp:IP:port'.
                 # 'from 127.0.0.1' selalu internal (haproxy/nginx), jangan dipakai.
@@ -1582,14 +1588,18 @@ def get_xray_conn_counts(window_seconds: int = 120) -> dict[str, int]:
     for line in lines:
         if "email:" not in line or "accepted" not in line:
             continue
+        # FAIL-CLOSED (sama dgn get_xray_active_ips): baris multi-baris tanpa
+        # timestamp wajib di-skip agar baris basi tidak terhitung sebagai
+        # koneksi aktif → cegah notif Xray padahal offline.
         m_time = re.match(r"^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})", line)
-        if m_time:
-            try:
-                log_dt = datetime.datetime.strptime(m_time.group(1), "%Y/%m/%d %H:%M:%S")
-                if abs((now - log_dt).total_seconds()) > window_seconds:
-                    continue
-            except Exception:
-                pass
+        if not m_time:
+            continue
+        try:
+            log_dt = datetime.datetime.strptime(m_time.group(1), "%Y/%m/%d %H:%M:%S")
+            if abs((now - log_dt).total_seconds()) > window_seconds:
+                continue
+        except Exception:
+            continue
         m_email = re.search(r"email:\s*([a-zA-Z0-9_-]+)", line)
         if m_email:
             counts[m_email.group(1)] = counts.get(m_email.group(1), 0) + 1

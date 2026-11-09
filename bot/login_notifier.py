@@ -152,8 +152,9 @@ async def detect_and_notify_new_logins(bot: Bot, ssh_sess: dict, xray_ips: dict)
                 for uname, ip in items:
                     if uname not in acc_map:
                         continue
-                    ip_str = f"<code>{html.escape(ip)}</code>" if show_ip else "<code>•••</code>"
-                    lines.append(f"  • <code>{html.escape(uname)}</code>  dari  {ip_str}")
+                    # Tampilkan username saja — IP SSH tak diminta & IP Xray tak tersedia
+                    # (build v26.10.31 tak baca XFF), jadi tak ada "dari <ip>".
+                    lines.append(f"  • <code>{html.escape(uname)}</code>")
                 if lines:
                     wib = now_wib().strftime("%Y-%m-%d %H:%M:%S WIB")
                     text = (
@@ -276,15 +277,12 @@ async def build_online_reports() -> list[str]:
     isp = await _get_isp_cached()
     messages: list[str] = []
 
-    # Pesan 1: SSH (PID + IP nyata)
+    # Pesan 1: SSH (jumlah PID sesi login; tanpa IP)
     if ssh_users:
         rows = []
         for uname in ssh_users:
-            sess = ssh_sess[uname]
-            n_pid = len(sess)
-            n_ip = len({ip for _, ip in sess})
-            tail = f"{n_pid} PID" if n_ip == n_pid else f"{n_pid} PID | {n_ip} IP"
-            rows.append((uname, tail))
+            n_pid = len(ssh_sess[uname])
+            rows.append((uname, f"{n_pid} PID"))
         messages.append(_render_online_block(domain, isp, [("Users Login SSH", rows)], len(ssh_users)))
 
     # Pesan 2..n: tiap protokol Xray (username saja — IP tak tersedia)

@@ -693,8 +693,7 @@ async def cb_adm_online(call: CallbackQuery):
         if acc_type == "ssh":
             sess = ssh_map.get(uname, [])
             n_pid = len(sess)
-            n_ip = len({ip for _, ip in sess})
-            detail = f"Login: <b>{n_pid} PID | {n_ip} IP</b>" if n_pid else "Login: <b>0</b>"
+            detail = f"Login: <b>{n_pid} PID</b>" if n_pid else "Login: <b>0</b>"
             online = n_pid > 0
         else:
             # Xray WS jalur ini tak membaca X-Real-IP (build v26.10.31) → tak ada
