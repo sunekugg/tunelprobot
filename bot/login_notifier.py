@@ -262,8 +262,6 @@ async def build_online_reports() -> list[str]:
     Return list pesan (0-2 item). Tiap protokol Xray punya pesan sendiri.
     """
     ssh_sess = get_ssh_active_sessions()
-    # Jumlah koneksi aktif per-user Xray (proxy terdekat utk "PID" — Xray single-process)
-    conn_counts = get_xray_conn_counts(window_seconds=60)
     xray_by_proto = await _get_online_xray_by_proto()
     acc_map = await _get_all_accounts_map()
 
@@ -287,16 +285,13 @@ async def build_online_reports() -> list[str]:
             rows.append((uname, f"{n_pid} PID"))
         messages.append(_render_online_block(domain, isp, [("Users Login SSH", rows)], len(ssh_users)))
 
-    # Pesan 2..n: tiap protokol Xray (jumlah koneksi aktif; IP & PID tak tersedia —
-    # Xray single-process tanpa PID per-sesi, jadi proxy terdekat = koneksi accepted).
+    # Pesan 2..n: tiap protokol Xray (username saja — PID & IP tak tersedia,
+    # Xray single-process; jumlah koneksi juga tak diminta).
     proto_label = {"vmess": "Users Login VMESS", "vless": "Users Login VLESS", "trojan": "Users Login TROJAN"}
     for proto in ("vmess", "vless", "trojan"):
         users = xray_lines_by_proto.get(proto)
         if users:
-            rows = []
-            for u in sorted(users):
-                n_conn = conn_counts.get(u, 1)
-                rows.append((u, f"{n_conn} conn"))
+            rows = [(u, "") for u in sorted(users)]
             messages.append(_render_online_block(domain, isp,
                                                  [(proto_label[proto], rows)], len(users)))
 
