@@ -88,20 +88,22 @@ fi
 mkdir -p /etc/dropbear && chmod 700 /etc/dropbear
 [ -f /etc/dropbear/dropbear_rsa_host_key ] || /usr/local/sbin/dropbearkey -t rsa -s 2048 -f /etc/dropbear/dropbear_rsa_host_key >/dev/null 2>&1
 [ -f /etc/dropbear/dropbear_ed25519_host_key ] || /usr/local/sbin/dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >/dev/null 2>&1
-cat > /etc/systemd/system/dropbear-2019.service <<UNIT
+cat > /etc/systemd/system/dropbear.service <<UNIT
 [Unit]
-Description=Dropbear SSH (2019) - port 90
+Description=Dropbear SSH (2019) - port 90/109
 After=network.target
 [Service]
 Type=forking
-ExecStart=/usr/local/sbin/dropbear -p 90 -r /etc/dropbear/dropbear_rsa_host_key -r /etc/dropbear/dropbear_ed25519_host_key
+ExecStart=/usr/local/sbin/dropbear -EF -p 90 -p 109 -b /etc/dropbear/issue.net -W 65536
 Restart=always
+RestartSec=2
 [Install]
 WantedBy=multi-user.target
 UNIT
+echo "Selamat datang di server VPN" > /etc/dropbear/issue.net 2>/dev/null || true
 systemctl daemon-reload
-systemctl enable dropbear-2019 >/dev/null 2>&1 || true
-systemctl restart dropbear-2019 || log "dropbear-2019 start gagal (cek port 90)"
+systemctl enable dropbear >/dev/null 2>&1 || true
+systemctl restart dropbear || log "dropbear start gagal (cek port 90/109)"
 
 log "=== [4/9] Restore konfigurasi live dari snapshot ==="
 mkdir -p /tmp/snap && cd /tmp/snap && rm -rf ./*
@@ -153,6 +155,42 @@ fi
 
 log "=== [6/9] SSL cert (acme.sh standalone port 80) ==="
 mkdir -p /etc/xray/certs
+
+# renew-ssl.sh — auto perpanjang cert (dipanggil cron harian)
+cat > /usr/local/bin/renew-ssl.sh <<'RENEW'
+#!/usr/bin/env bash
+set -e
+FORCE_MODE="${1:-}"
+DOMAIN=$(grep -E '^DOMAIN=' /etc/tunnel-bot/config.env | cut -d'=' -f2 | tr -d '[:space:]')
+[ -z "$DOMAIN" ] && exit 1
+if [ "$FORCE_MODE" != "--force" ] && [ -s /etc/xray/certs/fullchain.pem ]; then
+    if ! openssl x509 -in /etc/xray/certs/fullchain.pem -noout -issuer 2>/dev/null | grep -qi "VPNServer"; then
+        if openssl x509 -checkend 2592000 -noout -in /etc/xray/certs/fullchain.pem >/dev/null 2>&1; then
+            exit 0
+        fi
+    fi
+fi
+systemctl stop nginx 2>/dev/null || true
+fuser -k 80/tcp 2>/dev/null || true
+RENEWED=0
+if [ -f /root/.acme.sh/acme.sh ]; then
+    if /root/.acme.sh/acme.sh --renew -d "${DOMAIN}" --ecc --force || \
+       /root/.acme.sh/acme.sh --issue -d "${DOMAIN}" --standalone -k ec-256 --force; then
+        /root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" --ecc \
+            --fullchain-file /etc/xray/certs/fullchain.pem \
+            --key-file /etc/xray/certs/privkey.pem
+        RENEWED=1
+    fi
+fi
+if [ "$RENEWED" -eq 1 ]; then
+    cat /etc/xray/certs/fullchain.pem /etc/xray/certs/privkey.pem > /etc/xray/certs/haproxy.pem
+    chmod 644 /etc/xray/certs/*
+fi
+systemctl start nginx 2>/dev/null || true
+systemctl reload haproxy 2>/dev/null || systemctl restart haproxy 2>/dev/null || true
+RENEW
+chmod +x /usr/local/bin/renew-ssl.sh
+
 curl -fsSL https://get.acme.sh | sh -s email=admin@${DOMAIN} >>"$LOG" 2>&1 || log "acme.sh install gagal"
 if [ ! -s /etc/xray/certs/fullchain.pem ]; then
   systemctl stop nginx haproxy 2>/dev/null || true; fuser -k 80/tcp 2>/dev/null || true
