@@ -170,6 +170,11 @@ chmod +x /usr/local/bin/ws-ssh.py /usr/local/bin/vpn-bw-manager.py /usr/local/bi
 mkdir -p /var/log/xray /usr/local/share/xray
 touch /var/log/xray/access.log /var/log/xray/error.log
 chmod 666 /var/log/xray/access.log /var/log/xray/error.log
+# Satukan 2 path config xray (bot & snapshot pakai /usr/local/etc/xray,
+# beberapa installer pakai /etc/xray) -> symlink agar xray & bot baca file sama.
+if [ -f /usr/local/etc/xray/config.json ]; then
+  ln -sfn /usr/local/etc/xray/config.json /etc/xray/config.json
+fi
 if [ -f /etc/systemd/system/xray.service ]; then
   sed -i 's/^User=.*/User=root/; s/^Group=.*/Group=root/' /etc/systemd/system/xray.service
   grep -q "^User=root" /etc/systemd/system/xray.service || sed -i '/\[Service\]/a User=root' /etc/systemd/system/xray.service
