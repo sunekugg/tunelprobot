@@ -1364,16 +1364,18 @@ def _read_dropbear_auth_map() -> dict[str, tuple[str, str]]:
         return ip
 
     # Sumber 1: journalctl -u dropbear (dropbear unit log ke journal, bukan auth.log)
+    # Format -o cat: "[290053] Nov 09 09:41:03 Password auth succeeded for 'u' from 1.2.3.4:5678"
+    #   atau format syslog: "host dropbear[290053]: ..." — tangani keduanya.
+    pat = re.compile(
+        r"(?:dropbear)?\[(\d+)\].*?Password auth succeeded for '([^']+)' from (\S+?)(?::(\d+))?\s*$"
+    )
     try:
         out = subprocess.check_output(
             ["journalctl", "-u", "dropbear", "-n", "300", "--no-pager", "-o", "cat"],
             text=True, stderr=subprocess.DEVNULL, timeout=5,
         )
         for ln in out.splitlines():
-            m = re.search(
-                r"dropbear\[(\d+)\]:\s.*Password auth succeeded for '([^']+)' from (\S+?)(?::(\d+))?\s*$",
-                ln,
-            )
+            m = pat.search(ln)
             if m:
                 ip = resolve_ip(m.group(3), m.group(4))
                 pid_map[m.group(1)] = (m.group(2), ip)
@@ -1392,10 +1394,7 @@ def _read_dropbear_auth_map() -> dict[str, tuple[str, str]]:
             for ln in lines:
                 if "dropbear[" not in ln:
                     continue
-                m = re.search(
-                    r"dropbear\[(\d+)\]:\s.*Password auth succeeded for '([^']+)' from (\S+?)(?::(\d+))?\s*$",
-                    ln,
-                )
+                m = pat.search(ln)
                 if m:
                     ip = resolve_ip(m.group(3), m.group(4))
                     pid_map[m.group(1)] = (m.group(2), ip)
