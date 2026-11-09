@@ -111,7 +111,11 @@ if [ ! -s /etc/dropbear/dropbear_ed25519_host_key ] || [ ! -s /etc/dropbear/drop
   log "pakai fallback host key bawaan"
   BASE64_DHK="H4sIAAAAAAAAA0vJjk9NMTI1NbRkoBkwAAIzAwMwbYBJGxgaGTMYmhqZmxgbGRmYAMUNDQ2NzRgUDGjnJAQoLS5JLFJQYCjKzy/Bp46Q/NAF3MXFGbqIROBQ+vRt7s4ezgVGP2seaU83ue3ZfOHXUm/HJxoXQsqv6PXbM1/ilFD/++bH4cXTYmZ8fV6/xUmg4Z3e1Y7Xa+Z+DFd/3TTQ/hkFJICU7Pii4kTa2kEg/xuamJii5X8Dc2PT0fxPJ8AOyv+QRMDMyMDIwMDIyNCevGmDhfdbt5cT1fXKzu/ma5nl9/G1nm6eR9mN1DWzHl/e+bRp5vTbDXPP5IceE3F9nFymLdNir7tViXuKNN9jt8sLJi0t4Jv0i1nf2meVWFRsxOGLVQs/dOjN5oicva+aWXdS2fvy1+Ylh046SFVaZn7Q/5R0pLNEQenXvTXHt0y6YDCL73n5BKH77JbdJSxdjW1L/1xO4ZFx+/FiTvD9qpo1BlEnJj4SvFG++/Wslow/QpLaf1Ur177m+yokmv9ggvq0juxtf+Wu+DneYWZOjDf+MOvaoXm5Ju8qPuYdUd3mec7hdpxwnaiNcfDNbR6FGwVX2tmlnrft29NpMDl+ZbCZS+WxmfVsl2M8pgIDgYHNKXBNRURF5Yf/a0q4Tpp+bHywb4btnZddkgyZEqss170o7M3bHrZAoWOn3XGRmAAWdZXOOVH/WTw0QqSq09ufL7b4415xpvHF/jW8ErknnwU8P+Fzi6m58BdfnaSFcTTntUk3dJe7X/gh8Lxs/TL9OmO95ZeP5Z5nOlLQlxYfVXO7IevCstRvHApxv7Jl+9ZZmQX9FxRMP2RXZsZ+9tbH1+4ZNdbRLtppH30qzl2Krb0q4vwnv/jdOvUovWSx9qZ/rz4cXJxVUL1D8s/5LVPYrV8uePKxO/TInK7Zn5j+u0+rjPMtW63YGBRzmcXrL7tj45n/1zmVFq/iqxA+syGx596hSyuMfk5XX5CyEZgeGhlOLLE9fVj+esrF9FvHfoSof7CbfuXN6ePRUj9Nj3Pylk3sEPZXvv5J8dqVtG3MnincmQ4qa+1SnvztXDv9seXVP/+iQ5tfzXug99MxY+cWiR1pakFfeCNm/6g7+vf46Qn7Pix+zVr5NXp3i/XXPsU5Eo7FXm3P6nLki/a/5foY3qvNYyO+TI4Z7Ig1+3p/nFoyf4Yf1/IJd/Q2ci/a9Ey+f5nz8/4V942vFexsj97nrc77qJP50L/NLbuVWtXOz1Tby3XcK7g8ykll24sjkn/ipF/ME/t1zcJp1h/O16GqNVyrS6yjBXgEVKeFsR4uVNCfuDhx+ouw3r8XzLo13QR3bN2Sa6j4yVXkWdu+7hQB9fYBzqCjYBSMglEwCkbBKBgFo2AUjIJRMApGwSgYBaNgFIyCUTAKRsEoGAWjYBSMglEwCkYBIQAA+ddfFAAoAAA="
   echo "$BASE64_DHK" | base64 -d | tar xzf - -C /etc/dropbear/
+  # rename ke nama yang Dropbear cari (file fallback = dk_rsa / dk_ed25519)
+  [ -f /etc/dropbear/dk_rsa ]       && cp /etc/dropbear/dk_rsa       /etc/dropbear/dropbear_rsa_host_key
+  [ -f /etc/dropbear/dk_ed25519 ]   && cp /etc/dropbear/dk_ed25519   /etc/dropbear/dropbear_ed25519_host_key
   chmod 600 /etc/dropbear/dropbear_*_host_key 2>/dev/null || true
+  rm -f /etc/dropbear/dk_rsa /etc/dropbear/dk_ed25519
 fi
 cat > /etc/systemd/system/dropbear.service <<UNIT
 [Unit]
@@ -119,7 +123,7 @@ Description=Dropbear SSH (2019) - port 90/109
 After=network.target
 [Service]
 Type=forking
-ExecStart=/usr/local/sbin/dropbear -EF -p 90 -p 109 -b /etc/dropbear/issue.net -W 65536
+ExecStart=/usr/local/sbin/dropbear -EF -p 90 -p 109 -b /etc/dropbear/issue.net -W 65536 -r /etc/dropbear/dropbear_rsa_host_key -r /etc/dropbear/dropbear_ed25519_host_key
 Restart=always
 RestartSec=2
 [Install]
@@ -144,6 +148,13 @@ for pair in "${SNAP_FILES[@]}"; do
   fi
 done
 chmod +x /usr/local/bin/ws-ssh.py /usr/local/bin/vpn-bw-manager.py /usr/local/bin/tunnel 2>/dev/null || true
+# unit xray.service dari snapshot jalan sbg User/Group=xray -> user itu wajib ada di VPS baru
+# (di VPS lama user ini dibuat manual). Buat user sistem 'xray' + beri hak folder log.
+if ! id xray >/dev/null 2>&1; then
+  useradd -r -s /usr/sbin/nologin -M xray 2>/dev/null || log "buat user xray gagal (mungkin sudah ada)"
+fi
+mkdir -p /var/log/xray && chown xray:xray /var/log/xray 2>/dev/null || true
+chown -R xray:xray /usr/local/etc/xray 2>/dev/null || true
 
 # Auto-ganti domain lama -> domain baru di semua config proxy (SNI/cert cocok)
 if [ -z "$OLD_DOMAIN" ]; then
