@@ -6,16 +6,6 @@
 # ==============================================================================
 set -euo pipefail
 
-# ======== CONFIG — WAJIB DIISI SEBELUM JALANKAN ========
-BOT_TOKEN=""        # Token bot Telegram dari @BotFather
-ADMIN_ID=""         # ID admin utama (angka Telegram)
-DOMAIN=""           # Domain VPS baru (A record sudah diarahkan ke IP ini)
-OLD_DOMAIN=""       # (Opsional) domain di config lama, jika mau dipaksa ganti. Kosongkan = deteksi otomatis
-REPO_URL="https://github.com/sunekugg/tunelprobot.git"   # URL repo
-BRANCH="dev"
-GH_TOKEN=""         # Opsional: token GitHub (kosongkan utk repo publik)
-# =======================================================
-
 LOG="/var/log/tunnel-bot-deploy.log"
 REPO="/opt/tunnel-bot"
 DATA="/etc/tunnel-bot"
@@ -24,9 +14,29 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
 die() { echo "FATAL: $*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "Jalankan sebagai root."
-[ -n "$BOT_TOKEN" ] || die "Isi BOT_TOKEN dulu di bagian CONFIG."
-[ -n "$ADMIN_ID" ]  || die "Isi ADMIN_ID dulu di bagian CONFIG."
-[ -n "$DOMAIN" ]    || die "Isi DOMAIN dulu di bagian CONFIG."
+
+# ======== AMBIL DATA DARI ARGUMEN ATAU TANYA INTERAKTIF ========
+# Pakai: bash deploy-full.sh <TOKEN> <ADMIN_ID> <DOMAIN> [REPO_URL] [BRANCH] [OLD_DOMAIN]
+BOT_TOKEN="${1:-}"
+ADMIN_ID="${2:-}"
+DOMAIN="${3:-}"
+REPO_URL="${4:-https://github.com/sunekugg/tunelprobot.git}"
+BRANCH="${5:-dev}"
+OLD_DOMAIN="${6:-}"
+GH_TOKEN="${GH_TOKEN:-}"
+
+if [ -z "$BOT_TOKEN" ] || [ -z "$ADMIN_ID" ] || [ -z "$DOMAIN" ]; then
+  echo "=== Deploy tunnel-bot SEKALI JALAN ==="
+  [ -z "$BOT_TOKEN" ] && read -rp "Token bot Telegram: " BOT_TOKEN
+  [ -z "$ADMIN_ID" ]  && read -rp "ID admin utama (angka): " ADMIN_ID
+  [ -z "$DOMAIN" ]    && read -rp "Domain VPS baru (A record -> IP ini): " DOMAIN
+  if [ -z "$OLD_DOMAIN" ]; then
+    read -rp "Domain config lama (Enter = deteksi otomatis): " OLD_DOMAIN
+  fi
+fi
+[ -n "$BOT_TOKEN" ] || die "Token bot wajib diisi."
+[ -n "$ADMIN_ID" ]  || die "ID admin wajib diisi."
+[ -n "$DOMAIN" ]    || die "Domain wajib diisi."
 
 # ---------- snapshot konfigurasi live (base64) ----------
 SNAP_B64="
