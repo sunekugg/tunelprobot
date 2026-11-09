@@ -81,7 +81,7 @@ log "=== [2/9] Install dependency dasar ==="
 wait_apt; apt-get update -y >>"$LOG" 2>&1
 wait_apt; apt-get install -y git curl wget jq socat cron net-tools lsof iproute2 \
   iptables vnstat haproxy nginx openssl uuid-runtime python3 python3-venv python3-pip \
-  sqlite3 tzdata build-essential zlib1g-dev libssl-dev bzip2 unzip ca-certificates \
+  sqlite3 tzdata build-essential zlib1g-dev libssl-dev bzip2 unzip ca-certificates sshpass \
   >>"$LOG" 2>&1
 
 log "=== [3/9] Compile Dropbear 2019 (port 90/109/143) ==="
