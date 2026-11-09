@@ -107,6 +107,17 @@ for pair in "${SNAP_FILES[@]}"; do
 done
 chmod +x /usr/local/bin/ws-ssh.py /usr/local/bin/vpn-bw-manager.py /usr/local/bin/tunnel 2>/dev/null || true
 
+# Auto-ganti domain lama -> domain baru di semua config proxy (SNI/cert cocok)
+OLD_DOMAIN="$(grep -rhoE "[a-zA-Z0-9.-]+\.(web\.id|my\.id|com|net|org|vip)" /tmp/snap/_usr_local_etc_xray_config.json 2>/dev/null | grep -vE "github|xtls|acme|matt\.ucc|dropbear" | head -1 || true)"
+if [ -n "$OLD_DOMAIN" ] && [ "$OLD_DOMAIN" != "$DOMAIN" ]; then
+  log "ganti domain $OLD_DOMAIN -> $DOMAIN di config proxy"
+  sed -i "s/${OLD_DOMAIN}/${DOMAIN}/g" \
+    /usr/local/etc/xray/config.json \
+    /etc/haproxy/haproxy.cfg \
+    /etc/nginx/nginx.conf \
+    /etc/nginx/conf.d/vpn-multiplex.conf 2>/dev/null || true
+fi
+
 log "=== [5/9] Xray core ==="
 if ! command -v xray >/dev/null 2>&1 && [ ! -f /usr/local/bin/xray ]; then
   log "unduh Xray core terbaru"
