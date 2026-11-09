@@ -86,14 +86,16 @@ wait_apt; apt-get install -y git curl wget jq socat cron net-tools lsof iproute2
 
 log "=== [3/9] Compile Dropbear 2019 (port 90) ==="
 if ! /usr/local/sbin/dropbear -V 2>&1 | grep -q "2019.78"; then
-  apt-get remove -y dropbear >>"$LOG" 2>&1 || true
-  mkdir -p /tmp/drop && cd /tmp/drop
+  mkdir -p /tmp/drop && cd /tmp/drop && rm -rf ./*
   curl -fsSL "https://matt.ucc.asn.au/dropbear/releases/dropbear-2019.78.tar.bz2" -o d.tar.bz2 \
     || curl -fsSL "https://dropbear.nl/mirror/releases/dropbear-2019.78.tar.bz2" -o d.tar.bz2 \
     || die "Gagal unduh Dropbear source"
   tar -xjf d.tar.bz2 && cd dropbear-2019.78
-  CFLAGS="-O2 -Wno-error" ./configure --prefix=/usr --sysconfdir=/etc/dropbear >>"$LOG" 2>&1
-  make -j"$(nproc)" >>"$LOG" 2>&1 && make install >>"$LOG" 2>&1
+  CFLAGS="-O2 -Wno-error" ./configure --prefix=/usr/local --sysconfdir=/etc/dropbear >>"$LOG" 2>&1 \
+    || die "Dropbear configure gagal (cek $LOG)"
+  make -j"$(nproc)" >>"$LOG" 2>&1 || die "Dropbear make gagal (cek $LOG)"
+  make install >>"$LOG" 2>&1 || log "make install peringatan (lanjut)"
+  [ -x /usr/local/sbin/dropbear ] || die "dropbear binary tak terpasang (compile gagal, cek $LOG)"
 fi
 mkdir -p /etc/dropbear && chmod 700 /etc/dropbear
 # VPS baru sering entropi rendah -> dropbearkey RSA 2048 bisa hang/error.
@@ -160,6 +162,11 @@ if ! command -v xray >/dev/null 2>&1 && [ ! -f /usr/local/bin/xray ]; then
 fi
 systemctl daemon-reload
 systemctl enable xray >/dev/null 2>&1 || true
+# Xray access logger wajib folder log ada (deploy VPS baru: folder tak otomatis dibuat)
+mkdir -p /var/log/xray && chmod 755 /var/log/xray
+grep -q "/var/log/xray" /etc/logrotate.d/xray 2>/dev/null || cat > /etc/logrotate.d/xray <<'LR'
+/var/log/xray/*.log { daily rotate 7 compress missingok notifempty sharedscripts postrotate systemctl reload xray >/dev/null 2>&1 || true endscript }
+LR
 # validasi config sebelum start
 if [ -f /usr/local/etc/xray/config.json ] && /usr/local/bin/xray run -test -c /usr/local/etc/xray/config.json >/dev/null 2>&1; then
   systemctl restart xray || log "xray start gagal"
