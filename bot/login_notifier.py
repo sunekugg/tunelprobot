@@ -269,34 +269,51 @@ async def build_online_report() -> str | None:
     domain = _get_server_hostname()
     isp = await _get_isp_cached()
 
-    lines = [
-        "<b>DOMAIN :</b>",
-        f"{html.escape(domain)}",
-        "<b>ISP    :</b>",
-        f"{html.escape(isp)}",
-    ]
+    # Bangun baris konten dulu (plain text), lalu pad kolom username agar sejajar,
+    # terakhir bungkus semuanya dalam <pre> agar tampil mono & rapi di Telegram.
+    body: list[tuple[str, str]] = []  # (username/label, sisa teks)
 
     if ssh_users:
-        lines.append("<b>Users Login SSH</b>")
+        body.append(("Users Login SSH", ""))
         for uname in ssh_users:
             sess = ssh_sess[uname]
             n_pid = len(sess)
             n_ip = len({ip for _, ip in sess})
-            if n_ip == n_pid:
-                lines.append(f"{html.escape(uname)} {n_pid} PID")
-            else:
-                lines.append(f"{html.escape(uname)} {n_pid} PID | {n_ip} IP")
-        lines.append("")
+            tail = f"{n_pid} PID" if n_ip == n_pid else f"{n_pid} PID | {n_ip} IP"
+            body.append((uname, tail))
+        body.append(("", ""))
 
     proto_label = {"vmess": "Users Login VMESS", "vless": "Users Login VLESS", "trojan": "Users Login TROJAN"}
     for proto in ("vmess", "vless", "trojan"):
-        if xray_lines_by_proto.get(proto):
-            lines.append(f"<b>{proto_label[proto]}</b>")
-            lines.extend(xray_lines_by_proto[proto])
-            lines.append("")
+        users = xray_lines_by_proto.get(proto)
+        if users:
+            body.append((proto_label[proto], ""))
+            for uname in users:
+                # Xray WS jalur ini tak baca X-Real-IP (build v26.10.31) → username saja.
+                body.append((uname, ""))
+            body.append(("", ""))
 
-    lines.append(f"<b>Total : {total_online}</b>")
-    return "\n".join(lines)
+    # Lebar kolom username utk perataan (label & domain di luar blok kolom).
+    name_w = max([len(n) for n, _ in body if n and not n.startswith("Users Login")] or [0])
+    name_w = min(max(name_w, 8), 40)  # batasi biar tak melebar tak wajar
+
+    out = [
+        "DOMAIN : " + domain,
+        "ISP    : " + isp,
+        "",
+    ]
+    for name, tail in body:
+        if not name:
+            out.append("")
+        elif name.startswith("Users Login"):
+            out.append(name)
+        else:
+            out.append(f"{name.ljust(name_w)} {tail}".rstrip())
+
+    out.append(f"Total : {total_online}")
+    inner = "\n".join(out)
+    # Escape isi agar karakter < > & dari data tak merusak parse_mode HTML.
+    return "<pre>" + html.escape(inner) + "</pre>"
 
 
 def _xray_port_for(proto: str) -> int:
