@@ -697,15 +697,15 @@ async def cb_adm_online(call: CallbackQuery):
             detail = f"Login: <b>{n_pid} PID | {n_ip} IP</b>" if n_pid else "Login: <b>0</b>"
             online = n_pid > 0
         else:
-            # Xray single-process: tanpa PID nyata → jumlah koneksi. Real IP tak
-            # terbaca di xray 26.10.31 (from tetap 127.0.0.1), jadi IP unavailable.
-            n_conn = xray_conn.get(uname, 0)
-            detail = f"Login: <b>{n_conn} PID | IP tidak tersedia</b>" if n_conn else "Login: <b>0</b>"
-            online = n_conn > 0
+            # Xray WS jalur ini tak membaca X-Real-IP (build v26.10.31) → tak ada
+            # Real IP & tak ada PID nyata. Tampilkan status online, tanpa angka.
+            online = xray_conn.get(uname, 0) > 0
+            detail = "Login: <b>Online</b> (IP tidak tersedia)" if online else "Login: <b>0</b>"
         if online or is_locked:
             online_count += 1
             lock_badge = " 🔒[TERKUNCI]" if is_locked else " 🟢[ONLINE]"
-            lines.append(f"• <b>{acc_type.upper()}</b> <code>{uname}</code> (ID: <code>{tg_id}</code>)\n  └ Status:{lock_badge} | {detail} / {lim_str}")
+            tail = f" / {lim_str}" if acc_type == "ssh" else ""
+            lines.append(f"• <b>{acc_type.upper()}</b> <code>{uname}</code> (ID: <code>{tg_id}</code>)\n  └ {lock_badge} | {detail}{tail}")
             btns.append([InlineKeyboardButton(text=f"⚙️ Kelola: {uname}", callback_data=f"adm_acc_detail:{acc_id}")])
 
     if online_count == 0:
@@ -1638,6 +1638,7 @@ async def cb_adm_login_notif(call: CallbackQuery):
     notif_ca = (await get_setting("notif_create_account")) == "1"
     notif_exp = (await get_setting("notif_expired_user")) == "1"
     en_login = (await get_setting("login_notif_enabled")) == "1"
+    en_login_xray = (await get_setting("login_notif_xray_enabled")) == "1"
     interval = int(await get_setting("login_notif_interval_min") or "0")
     show_ip = (await get_setting("show_ip_in_notif")) == "1"
 
@@ -1665,6 +1666,7 @@ async def cb_adm_login_notif(call: CallbackQuery):
         [InlineKeyboardButton(text=f"1) Buat Akun  [{tg(notif_ca)}]", callback_data="adm_notif_create")],
         [InlineKeyboardButton(text=f"2) Expired  [{tg(notif_exp)}]", callback_data="adm_notif_expired")],
         [InlineKeyboardButton(text=f"3) Login  [{tg(en_login)}]", callback_data="adm_login_toggle")],
+        [InlineKeyboardButton(text=f"   └ Login Xray  [{tg(en_login_xray)}]", callback_data="adm_login_xray_toggle")],
         [InlineKeyboardButton(text=f"4) Report Online  ({interval} mnt)", callback_data="adm_report_interval")],
         [InlineKeyboardButton(text="🧪 Kirim Report Sekarang", callback_data="adm_report_now")],
         [InlineKeyboardButton(text=f"👁 IP: {'Tampil' if show_ip else 'Sembunyi'}", callback_data="adm_toggle_showip")],
@@ -1704,6 +1706,17 @@ async def cb_adm_login_toggle(call: CallbackQuery):
     await set_setting("login_notif_enabled", new_val)
     await generate_portable_backup_sh()
     await call.answer("🟢 Notif Login DIAKTIFKAN!" if new_val == "1" else "🔴 Notif Login DINONAKTIFKAN!", show_alert=True)
+    await cb_adm_login_notif(call)
+
+@router.callback_query(F.data == "adm_login_xray_toggle")
+async def cb_adm_login_xray_toggle(call: CallbackQuery):
+    if not await _guard_admin(call):
+        return
+    cur = await get_setting("login_notif_xray_enabled")
+    new_val = "0" if cur == "1" else "1"
+    await set_setting("login_notif_xray_enabled", new_val)
+    await generate_portable_backup_sh()
+    await call.answer("🟢 Notif Login Xray DIAKTIFKAN!" if new_val == "1" else "🔴 Notif Login Xray DINONAKTIFKAN! (IP Xray belum tersedia)", show_alert=True)
     await cb_adm_login_notif(call)
 
 @router.callback_query(F.data == "adm_toggle_showip")

@@ -127,6 +127,12 @@ async def detect_and_notify_new_logins(bot: Bot, ssh_sess: dict, xray_ips: dict)
         cur_snap = _get_online_snapshot(ssh_sess, xray_ips)
         show_ip = (await get_setting("show_ip_in_notif")) == "1"
 
+        # Notifikasi login Xray punya saklar sendiri (default OFF): Real IP Xray
+        # belum tersedia (build v26.10.31 tak baca XFF), jadi matikan biar tak spam
+        # baris "dari •••" tanpa makna. SSH tetap mengikuti login_notif_enabled.
+        if (await get_setting("login_notif_xray_enabled")) != "1":
+            cur_snap["xray"] = set()
+
         proto_label = {"ssh": "SSH/Dropbear", "xray": "VMess/VLESS/Trojan (Xray)"}
         new_logins: dict[str, list[tuple[str, str]]] = {}
         for proto in ("ssh", "xray"):
@@ -247,15 +253,13 @@ async def build_online_report() -> str | None:
 
     xray_lines_by_proto: dict[str, list[str]] = {}
     for proto, m in xray_by_proto.items():
-        for uname, ips in m.items():
+        for uname in m.keys():
             if uname not in acc_map:
                 continue
-            n_conn = ips if isinstance(ips, int) else 1
-            # Real IP klien tak terbaca di xray 26.10.31 (from tetap 127.0.0.1),
-            # jadi IP dilaporkan jujur; jumlah koneksi nyata tampil sebagai proxy PID.
-            xray_lines_by_proto.setdefault(proto, []).append(
-                f"{html.escape(uname)} {n_conn} PID | IP tidak tersedia"
-            )
+            # Real IP klien tak terbaca di Xray WS jalur ini (build v26.10.31):
+            # from tetap 127.0.0.1 walau nginx kirim X-Real-IP + trustedXFF aktif.
+            # Tak ada PID nyata (single-process) & tak ada IP → tampil username saja.
+            xray_lines_by_proto.setdefault(proto, []).append(html.escape(uname))
         xray_lines_by_proto[proto] = sorted(xray_lines_by_proto.get(proto, []))
 
     total_online = len(ssh_users) + sum(len(v) for v in xray_lines_by_proto.values())
