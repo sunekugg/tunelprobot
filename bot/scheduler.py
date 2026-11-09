@@ -15,10 +15,10 @@ from aiogram import Bot
 from aiogram.types import BotCommand, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from .config import DB_PATH, ADMIN_ID, now_wib
 from .db import (
-    get_setting, get_effective_limit_ip, get_servers_with_usage, add_log
+    get_setting, get_servers_with_usage, add_log
 )
 from .system_manager import (
-    refresh_all_servers_live_stats, get_ssh_active_sessions, get_xray_active_ips,
+    refresh_all_servers_live_stats,
     lock_ssh_on_server, delete_ssh_on_server, sync_xray_by_server,
     generate_portable_backup_sh, format_bytes_human, run_auto_heal_and_monitor
 )
@@ -90,8 +90,8 @@ async def scheduler_loop(bot: Bot):
             await refresh_all_servers_live_stats(force=True)
 
             # 1b. (notifikasi login per-event tidak lagi dikirim ke topic — hanya report berkala)
-            ssh_sessions = await asyncio.to_thread(get_ssh_active_sessions)
-            xray_ips = await asyncio.to_thread(get_xray_active_ips)
+            # (ssh_sessions/xray_ips untuk deteksi multi-login sudah tak dibutuhkan —
+            # fitur penegakan multi-login dihapus.)
 
             now_dt = now_wib().replace(tzinfo=None)
             now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -184,29 +184,8 @@ async def scheduler_loop(bot: Bot):
                         pass
                     continue
 
-                # C. Buka Kunci Otomatis Jika Waktu Hukuman Multi-Login Sudah Selesai
-                if is_locked == 1 and locked_until and locked_until != "QUOTA_EXCEEDED":
-                    try:
-                        lu_dt = datetime.datetime.strptime(locked_until.replace("WIB", "").strip(), "%Y-%m-%d %H:%M:%S")
-                        if now_dt >= lu_dt:
-                            async with aiosqlite.connect(DB_PATH, timeout=15) as db:
-                                await db.execute("UPDATE accounts SET is_locked = 0, locked_until = '' WHERE id = ?", (aid,))
-                                await db.commit()
-                            if atype == "ssh":
-                                await lock_ssh_on_server(sid, uname, lock=False, password=secret)
-                            else:
-                                affected_xray_srvs.add(sid)
-                            backup_needed = True
-                            try:
-                                await bot.send_message(
-                                    chat_id=uid,
-                                    text=f"🔓 Akun <code>{html.escape(uname)}</code> ({atype.upper()}) telah dibuka kembali secara otomatis.",
-                                    reply_markup=kb_start_btn
-                                )
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
+                # (Buka-kunci otomatis hukuman multi-login dihapus — fitur multi-login
+                # sudah dihapus. Kuota tetap dikunci 'QUOTA_EXCEEDED' sampai admin reset.)
 
             if expired_ids:
                 async with aiosqlite.connect(DB_PATH, timeout=15) as db:
@@ -215,77 +194,8 @@ async def scheduler_loop(bot: Bot):
                     await db.commit()
                 backup_needed = True
 
-            # 3. Penegakan Limit IP Multi-Server (Non-Blocking di Thread)
-            # ssh_sessions & xray_ips sudah diambil di langkah 1b
-            lock_min = int(await get_setting("lock_duration_minutes") or 15)
-            max_viol = int(await get_setting("max_violations") or 3)
-
-            for acc in all_accounts:
-                aid = int(acc["id"])
-                if aid in expired_ids or int(acc.get("is_locked") or 0) == 1:
-                    continue
-                uid = int(acc["tg_id"])
-                atype = acc["acc_type"]
-                uname = acc["username"]
-                sid = int(acc.get("server_id") or 1)
-                acc_lim = int(acc.get("limit_ip") if acc.get("limit_ip") is not None else -1)
-                lim_ip = acc_lim if acc_lim >= 0 else await get_effective_limit_ip(uid)
-                if lim_ip <= 0:
-                    continue
-
-                active_ip_set = {ip for _, ip in ssh_sessions.get(uname, [])} if atype == "ssh" else set(xray_ips.get(uname, set()))
-                if len(active_ip_set) > lim_ip:
-                    viol = int(acc.get("violations") or 0) + 1
-                    if viol >= max_viol:
-                        async with aiosqlite.connect(DB_PATH, timeout=15) as db:
-                            await db.execute("DELETE FROM accounts WHERE id = ?", (aid,))
-                            await db.commit()
-                        if atype == "ssh":
-                            await delete_ssh_on_server(sid, uname)
-                        else:
-                            affected_xray_srvs.add(sid)
-                        backup_needed = True
-                        try:
-                            await bot.send_message(
-                                chat_id=uid,
-                                text=(
-                                    "🚫 <b>AKUN DIHAPUS OTOMATIS (PELANGGARAN BERULANG)</b>\n\n"
-                                    f"• <b>Akun:</b> <code>{html.escape(uname)}</code> ({atype.upper()})\n"
-                                    f"• <b>IP Terdeteksi:</b> <code>{len(active_ip_set)} IP</code> (Batas: <code>{lim_ip} IP</code>)\n"
-                                    f"• <b>Pelanggaran:</b> <code>{viol}/{max_viol}</code>\n\n"
-                                    "Akun dihapus permanen karena melanggar batas multi-login."
-                                ),
-                                reply_markup=kb_start_btn
-                            )
-                        except Exception:
-                            pass
-                    else:
-                        lu_str = (now_dt + datetime.timedelta(minutes=lock_min)).strftime("%Y-%m-%d %H:%M:%S")
-                        async with aiosqlite.connect(DB_PATH, timeout=15) as db:
-                            await db.execute(
-                                "UPDATE accounts SET is_locked = 1, locked_until = ?, violations = ? WHERE id = ?",
-                                (lu_str, viol, aid)
-                            )
-                            await db.commit()
-                        if atype == "ssh":
-                            await lock_ssh_on_server(sid, uname, lock=True)
-                        else:
-                            affected_xray_srvs.add(sid)
-                        backup_needed = True
-                        try:
-                            await bot.send_message(
-                                chat_id=uid,
-                                text=(
-                                    "⚠️ <b>PERINGATAN MULTI-LOGIN (AKUN DIKUNCI SEMENTARA)</b>\n\n"
-                                    f"• <b>Akun:</b> <code>{html.escape(uname)}</code> ({atype.upper()})\n"
-                                    f"• <b>IP Aktif:</b> <code>{len(active_ip_set)} IP</code> (Batas: <code>{lim_ip} IP</code>)\n"
-                                    f"• <b>Pelanggaran:</b> <code>{viol}/{max_viol}</code>\n"
-                                    f"• <b>Dikunci Selama:</b> <code>{lock_min} Menit</code> (Buka: <code>{lu_str} WIB</code>)"
-                                ),
-                                reply_markup=kb_start_btn
-                            )
-                        except Exception:
-                            pass
+            # 3. (Penegakan Limit IP Multi-Login telah dihapus atas permintaan user —
+            # laporan penggunaan tetap dikirim ke topic grup.)
 
             # 4. Penegakan Kuota Bandwidth per-Server (GB)
             # Total pemakaian server = jumlah used_bytes seluruh akun di server tsb
