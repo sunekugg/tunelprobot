@@ -173,6 +173,7 @@ chmod 666 /var/log/xray/access.log /var/log/xray/error.log
 # Satukan 2 path config xray (bot & snapshot pakai /usr/local/etc/xray,
 # beberapa installer pakai /etc/xray) -> symlink agar xray & bot baca file sama.
 if [ -f /usr/local/etc/xray/config.json ]; then
+  mkdir -p /etc/xray
   ln -sfn /usr/local/etc/xray/config.json /etc/xray/config.json
 fi
 if [ -f /etc/systemd/system/xray.service ]; then
