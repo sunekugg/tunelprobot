@@ -226,78 +226,18 @@ async def _get_online_xray_by_proto() -> dict[str, dict[str, int]]:
     return by_proto
 
 
-async def build_online_report() -> str | None:
-    """Bangun teks rekap user online (SSH + Xray). Return None jika kosong.
-
-    Format mengikuti contoh pemilik:
-        DOMAIN :
-        <domain>
-        ISP    :
-        <isp>
-        Users Login SSH
-        ajii 1 PID
-        alyx 1 PID
-        Users Login VMESS
-        bernat 2.7GB 1IP | 19330
-        Total : 1
-    """
-    ssh_sess = get_ssh_active_sessions()
-    xray_by_proto = await _get_online_xray_by_proto()
-
-    acc_map = await _get_all_accounts_map()
-
-    # Hanya akun aktif (belum expired) + sedang online sekarang
-    ssh_users: list[str] = []
-    for uname, sess_list in ssh_sess.items():
-        if uname in acc_map:
-            ssh_users.append(uname)
-    ssh_users.sort()
-
-    xray_lines_by_proto: dict[str, list[str]] = {}
-    for proto, m in xray_by_proto.items():
-        for uname in m.keys():
-            if uname not in acc_map:
-                continue
-            # Real IP klien tak terbaca di Xray WS jalur ini (build v26.10.31):
-            # from tetap 127.0.0.1 walau nginx kirim X-Real-IP + trustedXFF aktif.
-            # Tak ada PID nyata (single-process) & tak ada IP → tampil username saja.
-            xray_lines_by_proto.setdefault(proto, []).append(html.escape(uname))
-        xray_lines_by_proto[proto] = sorted(xray_lines_by_proto.get(proto, []))
-
-    total_online = len(ssh_users) + sum(len(v) for v in xray_lines_by_proto.values())
-    if total_online == 0:
-        return None
-
-    domain = _get_server_hostname()
-    isp = await _get_isp_cached()
-
-    # Bangun baris konten dulu (plain text), lalu pad kolom username agar sejajar,
-    # terakhir bungkus semuanya dalam <pre> agar tampil mono & rapi di Telegram.
-    body: list[tuple[str, str]] = []  # (username/label, sisa teks)
-
-    if ssh_users:
-        body.append(("Users Login SSH", ""))
-        for uname in ssh_users:
-            sess = ssh_sess[uname]
-            n_pid = len(sess)
-            n_ip = len({ip for _, ip in sess})
-            tail = f"{n_pid} PID" if n_ip == n_pid else f"{n_pid} PID | {n_ip} IP"
+def _render_online_block(domain: str, isp: str, sections: list[tuple[str, list[tuple[str, str]]]],
+                         total: int) -> str:
+    """Render satu blok report mono. sections: [(label, [(username, tail)])]."""
+    body: list[tuple[str, str]] = []
+    for label, rows in sections:
+        body.append((label, ""))
+        for uname, tail in rows:
             body.append((uname, tail))
         body.append(("", ""))
 
-    proto_label = {"vmess": "Users Login VMESS", "vless": "Users Login VLESS", "trojan": "Users Login TROJAN"}
-    for proto in ("vmess", "vless", "trojan"):
-        users = xray_lines_by_proto.get(proto)
-        if users:
-            body.append((proto_label[proto], ""))
-            for uname in users:
-                # Xray WS jalur ini tak baca X-Real-IP (build v26.10.31) → username saja.
-                body.append((uname, ""))
-            body.append(("", ""))
-
-    # Lebar kolom username utk perataan (label & domain di luar blok kolom).
     name_w = max([len(n) for n, _ in body if n and not n.startswith("Users Login")] or [0])
-    name_w = min(max(name_w, 8), 40)  # batasi biar tak melebar tak wajar
+    name_w = min(max(name_w, 8), 40)
 
     out = [
         "DOMAIN : " + domain,
@@ -311,11 +251,52 @@ async def build_online_report() -> str | None:
             out.append(name)
         else:
             out.append(f"{name.ljust(name_w)} {tail}".rstrip())
+    out.append(f"Total : {total}")
+    return "<pre>" + html.escape("\n".join(out)) + "</pre>"
 
-    out.append(f"Total : {total_online}")
-    inner = "\n".join(out)
-    # Escape isi agar karakter < > & dari data tak merusak parse_mode HTML.
-    return "<pre>" + html.escape(inner) + "</pre>"
+
+async def build_online_reports() -> list[str]:
+    """Bangun report online TERPISAH: satu pesan SSH, satu pesan Xray.
+
+    Return list pesan (0-2 item). Tiap protokol Xray punya pesan sendiri.
+    """
+    ssh_sess = get_ssh_active_sessions()
+    xray_by_proto = await _get_online_xray_by_proto()
+    acc_map = await _get_all_accounts_map()
+
+    ssh_users = sorted(u for u in ssh_sess if u in acc_map)
+
+    xray_lines_by_proto: dict[str, list[str]] = {}
+    for proto, m in xray_by_proto.items():
+        for uname in m.keys():
+            if uname in acc_map:
+                xray_lines_by_proto.setdefault(proto, []).append(uname)
+
+    domain = _get_server_hostname()
+    isp = await _get_isp_cached()
+    messages: list[str] = []
+
+    # Pesan 1: SSH (PID + IP nyata)
+    if ssh_users:
+        rows = []
+        for uname in ssh_users:
+            sess = ssh_sess[uname]
+            n_pid = len(sess)
+            n_ip = len({ip for _, ip in sess})
+            tail = f"{n_pid} PID" if n_ip == n_pid else f"{n_pid} PID | {n_ip} IP"
+            rows.append((uname, tail))
+        messages.append(_render_online_block(domain, isp, [("Users Login SSH", rows)], len(ssh_users)))
+
+    # Pesan 2..n: tiap protokol Xray (username saja — IP tak tersedia)
+    proto_label = {"vmess": "Users Login VMESS", "vless": "Users Login VLESS", "trojan": "Users Login TROJAN"}
+    for proto in ("vmess", "vless", "trojan"):
+        users = xray_lines_by_proto.get(proto)
+        if users:
+            rows = [(u, "") for u in sorted(users)]
+            messages.append(_render_online_block(domain, isp,
+                                                 [(proto_label[proto], rows)], len(users)))
+
+    return messages
 
 
 def _xray_port_for(proto: str) -> int:
@@ -332,11 +313,13 @@ async def send_online_report(bot: Bot) -> bool:
     try:
         if (await get_setting("notif_topic_enabled")) != "1":
             return False
-        report = await build_online_report()
-        if report is None:
+        reports = await build_online_reports()
+        if not reports:
             # Tidak ada user online → jangan kirim apa-apa ke topic
             return False
-        await _send_to_topic(bot, report)
+        # Tiap jenis (SSH / tiap Xray proto) dikirim sebagai pesan terpisah.
+        for report in reports:
+            await _send_to_topic(bot, report)
         return True
     except Exception as e:
         print(f"[ONLINE REPORT ERROR] {e}")
