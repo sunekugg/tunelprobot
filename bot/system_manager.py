@@ -1445,6 +1445,7 @@ def get_ssh_active_sessions() -> dict[str, list[tuple[int, str]]]:
     result: dict[str, list[tuple[int, str]]] = {}
     db_map = _read_dropbear_auth_map()
     pid_user_map, ppid_children_map = _read_ps_user_maps()
+    ipmap = _read_ipmap()  # baca sekali, dipakai berulang di loop
 
     def resolve_user(pid_str: str) -> str | None:
         # Prioritas: user VPN non-root > user dari auth-log.
@@ -1462,12 +1463,20 @@ def get_ssh_active_sessions() -> dict[str, list[tuple[int, str]]]:
     try:
         out = subprocess.check_output(["ss", "-tnp"], text=True, stderr=subprocess.DEVNULL, timeout=5)
         for line in out.splitlines():
-            if "ESTAB" not in line or ("sshd" not in line and "dropbear" not in line):
+            if "ESTAB" not in line:
                 continue
+            # Sesi login SSH asli = socket yang LOCAL port-nya 90/109 (dropbear
+            # menerima dari ws-ssh). Koneksi outbound dari user (tunnel/socks ke
+            # Google/Telegram) punya local port lain — JANGAN dihitung sbg sesi.
             parts = line.split()
             if len(parts) < 5:
                 continue
-            remote_ip = parts[4].rsplit(":", 1)[0].strip("[]")
+            local_addr, peer_addr = parts[3], parts[4]
+            m_local = re.search(r":(\d+)$", local_addr)
+            if not m_local or m_local.group(1) not in ("90", "109"):
+                continue
+            peer_ip = peer_addr.rsplit(":", 1)[0].strip("[]")
+            peer_port = peer_addr.rsplit(":", 1)[-1]
             seen: set[int] = set()
             for pid_str in re.findall(r"pid=(\d+)", line):
                 u = resolve_user(pid_str)
@@ -1477,9 +1486,9 @@ def get_ssh_active_sessions() -> dict[str, list[tuple[int, str]]]:
                 if pid in seen:
                     continue
                 seen.add(pid)
-                # IP asli: utamakan peta auth-log (ipmap), jika peer = loopback.
-                _u, ip_db = db_map.get(pid_str, ("", ""))
-                use_ip = ip_db if (remote_ip in ("127.0.0.1", "::1") and ip_db) else remote_ip
+                # IP asli klien: peer dropbear = 127.0.0.1:<port_ws> → ipmap[<port_ws>]
+                real = ipmap.get(peer_port, {}).get("ip")
+                use_ip = real if real else peer_ip
                 result.setdefault(u, []).append((pid, use_ip))
     except Exception:
         pass
