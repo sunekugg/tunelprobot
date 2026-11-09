@@ -61,7 +61,23 @@ async def _post_startup_tasks(bot_instance: Bot):
         await sync_xray_clients()
     except Exception as e:
         logging.error(f"Startup Xray sync error: {e}")
+    _ensure_sshpass()
     asyncio.create_task(scheduler_loop(bot_instance))
+
+
+def _ensure_sshpass() -> None:
+    """self-heal: sshpass dibutuhkan cek server khusus (system_manager). Kalau binary
+    hilang (VPS lama dari installer sebelum 6eeeda1), pasang via apt sekali saat startup."""
+    import shutil, subprocess
+    if shutil.which("sshpass"):
+        return
+    try:
+        subprocess.run(["apt-get", "install", "-y", "sshpass"],
+                       capture_output=True, timeout=180)
+        ok = bool(shutil.which("sshpass"))
+        logging.info(f"Startup self-heal sshpass: {'terpasang' if ok else 'GAGAL — pasang manual'}")
+    except Exception as e:
+        logging.error(f"Startup self-heal sshpass error: {e}")
 
 async def main():
     await init_db()
