@@ -165,6 +165,9 @@ for pair in "${SNAP_FILES[@]}"; do
   fi
 done
 chmod +x /usr/local/bin/ws-ssh.py /usr/local/bin/vpn-bw-manager.py /usr/local/bin/tunnel 2>/dev/null || true
+# Buang default site apt-nginx. Kalau dibiarkan, `listen 80 default_server` menangkap
+# request port 80 -> serve halaman html (200) bukan websocket -> SSH port 80 tak konek.
+rm -f /etc/nginx/sites-enabled/default
 # Xray unit (dari snapshot) jalan sbg User=xray -> sering 217/USER gagal di VPS baru.
 # Metode TERUJI (nyala di VPS user): User=root. Folder log tetap disiapkan.
 mkdir -p /var/log/xray /usr/local/share/xray
