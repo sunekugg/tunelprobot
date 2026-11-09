@@ -175,12 +175,8 @@ if [ -f /etc/systemd/system/xray.service ]; then
   grep -q "^User=root" /etc/systemd/system/xray.service || sed -i '/\[Service\]/a User=root' /etc/systemd/system/xray.service
 fi
 
-# Patch haproxy: tambah bind :80 (HTTP Custom non-TLS). Snapshot server lama
-# tak punya listener :80 (hanya 443/8443/2053/2083/442) -> port 80 Connection lost.
-if [ -f /etc/haproxy/haproxy.cfg ] && ! grep -qE "bind .*:80( |$)" /etc/haproxy/haproxy.cfg; then
-  sed -i '/bind \*:442/a\    bind *:80' /etc/haproxy/haproxy.cfg
-  log "tambah bind :80 di haproxy (HTTP Custom)"
-fi
+# Port 80 = milik nginx (vpn-multiplex.conf: listen 80/8080/2052/2082/8880) —
+# JANGAN bind :80 di haproxy (konflik "Address already in use" -> haproxy mati).
 
 # Auto-ganti domain lama -> domain baru di semua config proxy (SNI/cert cocok)
 if [ -z "$OLD_DOMAIN" ]; then
