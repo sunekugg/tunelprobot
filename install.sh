@@ -149,8 +149,8 @@ read -rp "Token GitHub (opsional, kosongkan utk repo publik): " GH_TOKEN_IN || t
 if [ -d "$REPO_ROOT/.git" ]; then
   log "Repo sudah ada, tarik versi terbaru (tanpa reset --hard)"
   git -C "$REPO_ROOT" fetch origin
-  git -C "$REPO_ROOT" checkout main || true
-  git -C "$REPO_ROOT" merge --ff-only origin/main || \
+  git -C "$REPO_ROOT" checkout dev || true
+  git -C "$REPO_ROOT" merge --ff-only origin/dev || \
     log "⚠️ ff-only gagal; repo mungkin punya commit lokal. Cek manual."
 else
   log "Clone repo dari $REPO_URL_IN"
@@ -161,7 +161,7 @@ else
     printf 'protocol=https\nhost=%s\nusername=oauth2\npassword=%s\n\n' "$host" "$GH_TOKEN_IN" \
       | git credential approve 2>/dev/null || true
   fi
-  GIT_TERMINAL_PROMPT=0 git clone --branch main --depth 1 "$REPO_URL_IN" "$REPO_ROOT" >>"$LOG_FILE" 2>&1 \
+  GIT_TERMINAL_PROMPT=0 git clone --branch dev --depth 1 "$REPO_URL_IN" "$REPO_ROOT" >>"$LOG_FILE" 2>&1 \
     && log "clone sukses" \
     || err "clone gagal. Periksa URL repo atau set GITHUB_TOKEN."
 fi
