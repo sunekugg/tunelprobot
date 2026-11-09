@@ -1418,12 +1418,26 @@ def _read_ps_user_maps() -> tuple[dict[str, str], dict[str, list[str]]]:
 def get_ssh_active_sessions() -> dict[str, list[tuple[int, str]]]:
     """Sesi SSH/dropbear aktif → {username: [(pid, remote_ip)]}.
 
-    Meniru installer: gabung auth.log (dropbear) + ps -eo (sshd user) + ss -tnp (IP remote).
-    Tanpa ini, semua sesi terlihat milik 'root' karena socket owner = proses root.
+    Hanya menghitung PID yang punya koneksi TCP ESTABLISHED (baris ss -tnp),
+    dan tiap PID dihitung SEKALI (dedupe) supaya 1 HP = 1 sesi, bukan berkali-
+    kali karena PID kebetulan ada di auth-log + ps sekaligus.
     """
     result: dict[str, list[tuple[int, str]]] = {}
     db_map = _read_dropbear_auth_map()
     pid_user_map, ppid_children_map = _read_ps_user_maps()
+
+    def resolve_user(pid_str: str) -> str | None:
+        # Prioritas: user VPN non-root > user dari auth-log.
+        u = pid_user_map.get(pid_str)
+        if u and u not in _SYS_USERS:
+            return u
+        u2, _ip = db_map.get(pid_str, ("", ""))
+        if u2 and u2 not in _SYS_USERS:
+            return u2
+        for child_u in ppid_children_map.get(pid_str, []):
+            if child_u and child_u not in _SYS_USERS:
+                return child_u
+        return None
 
     try:
         out = subprocess.check_output(["ss", "-tnp"], text=True, stderr=subprocess.DEVNULL, timeout=5)
@@ -1434,16 +1448,19 @@ def get_ssh_active_sessions() -> dict[str, list[tuple[int, str]]]:
             if len(parts) < 5:
                 continue
             remote_ip = parts[4].rsplit(":", 1)[0].strip("[]")
+            seen: set[int] = set()
             for pid_str in re.findall(r"pid=(\d+)", line):
-                if pid_str in db_map:
-                    u_db, ip_db = db_map[pid_str]
-                    if u_db and u_db not in _SYS_USERS:
-                        use_ip = ip_db if remote_ip in ("127.0.0.1", "::1") else remote_ip
-                        result.setdefault(u_db, []).append((int(pid_str), use_ip))
-                if pid_str in pid_user_map:
-                    result.setdefault(pid_user_map[pid_str], []).append((int(pid_str), remote_ip))
-                for child_u in ppid_children_map.get(pid_str, []):
-                    result.setdefault(child_u, []).append((int(pid_str), remote_ip))
+                u = resolve_user(pid_str)
+                if not u:
+                    continue
+                pid = int(pid_str)
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                # IP asli: utamakan peta auth-log (ipmap), jika peer = loopback.
+                _u, ip_db = db_map.get(pid_str, ("", ""))
+                use_ip = ip_db if (remote_ip in ("127.0.0.1", "::1") and ip_db) else remote_ip
+                result.setdefault(u, []).append((pid, use_ip))
     except Exception:
         pass
 
