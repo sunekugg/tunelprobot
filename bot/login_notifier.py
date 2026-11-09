@@ -206,10 +206,10 @@ async def _get_online_xray_by_proto() -> dict[str, dict[str, set[str]]]:
         p = proto_of.get(uname, "vless")
         if p not in by_proto:
             p = "vless"
-        # Data server tak bisa memetakan IP asli HP → username (realip.log tak
-        # ada email, xray tak dapat PROXY protocol via nginx HTTP proxy_pass).
-        # Sesuai contoh pemilik, tiap akun online ditampilkan 1IP.
-        by_proto[p][uname] = {"1"}
+        # Xray access.log `from` tetap 127.0.0.1 meski nginx kirim X-Real-IP +
+        # trustedXForwardedFor=['X-Real-IP'] (bug v26.10.31). Lapor jujur tanpa
+        # angka palsu; upgrade path: patch xray atau terima dari stream/proxy.
+        by_proto[p][uname] = None
     return by_proto
 
 
@@ -245,8 +245,14 @@ async def build_online_report() -> str | None:
         for uname, ips in m.items():
             if uname not in acc_map:
                 continue
-            n = len(ips)
-            xray_lines_by_proto.setdefault(proto, []).append(f"{html.escape(uname)} {n}IP")
+            if ips is None:
+                xray_lines_by_proto.setdefault(proto, []).append(
+                    f"{html.escape(uname)} IP tidak tersedia"
+                )
+            else:
+                xray_lines_by_proto.setdefault(proto, []).append(
+                    f"{html.escape(uname)} {len(ips)}IP"
+                )
         xray_lines_by_proto[proto] = sorted(xray_lines_by_proto.get(proto, []))
 
     total_online = len(ssh_users) + sum(len(v) for v in xray_lines_by_proto.values())
