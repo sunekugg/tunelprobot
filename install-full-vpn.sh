@@ -165,13 +165,15 @@ for pair in "${SNAP_FILES[@]}"; do
   fi
 done
 chmod +x /usr/local/bin/ws-ssh.py /usr/local/bin/vpn-bw-manager.py /usr/local/bin/tunnel 2>/dev/null || true
-# unit xray.service dari snapshot jalan sbg User/Group=xray -> user itu wajib ada di VPS baru
-# (di VPS lama user ini dibuat manual). Buat user sistem 'xray' + beri hak folder log.
-if ! id xray >/dev/null 2>&1; then
-  useradd -r -s /usr/sbin/nologin -M xray 2>/dev/null || log "buat user xray gagal (mungkin sudah ada)"
+# Xray unit (dari snapshot) jalan sbg User=xray -> sering 217/USER gagal di VPS baru.
+# Metode TERUJI (nyala di VPS user): User=root. Folder log tetap disiapkan.
+mkdir -p /var/log/xray /usr/local/share/xray
+touch /var/log/xray/access.log /var/log/xray/error.log
+chmod 666 /var/log/xray/access.log /var/log/xray/error.log
+if [ -f /etc/systemd/system/xray.service ]; then
+  sed -i 's/^User=.*/User=root/; s/^Group=.*/Group=root/' /etc/systemd/system/xray.service
+  grep -q "^User=root" /etc/systemd/system/xray.service || sed -i '/\[Service\]/a User=root' /etc/systemd/system/xray.service
 fi
-mkdir -p /var/log/xray && chown xray:xray /var/log/xray 2>/dev/null || true
-chown -R xray:xray /usr/local/etc/xray 2>/dev/null || true
 
 # Auto-ganti domain lama -> domain baru di semua config proxy (SNI/cert cocok)
 if [ -z "$OLD_DOMAIN" ]; then
@@ -201,8 +203,14 @@ if ! command -v xray >/dev/null 2>&1 && [ ! -f /usr/local/bin/xray ]; then
   wget -qO /tmp/xray.zip \
     "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XRAY_ARCH}.zip" \
     || die "Gagal unduh Xray core (cek koneksi VPS)"
-  unzip -o /tmp/xray.zip xray -d /usr/local/bin/ >/dev/null && chmod +x /usr/local/bin/xray
-  rm -f /tmp/xray.zip
+  mkdir -p /usr/local/bin /usr/local/share/xray
+  # Ekstrak binary + .dat (geoip/geosite) — Xray gagal start bila .dat hilang saat routing memakai geosite/geoip
+  rm -rf /tmp/xray_ext && unzip -qo /tmp/xray.zip -d /tmp/xray_ext
+  cp -f /tmp/xray_ext/xray /usr/local/bin/xray
+  cp -f /tmp/xray_ext/*.dat /usr/local/share/xray/ 2>/dev/null || true
+  cp -f /tmp/xray_ext/*.dat /usr/local/bin/ 2>/dev/null || true
+  chmod +x /usr/local/bin/xray
+  rm -rf /tmp/xray.zip /tmp/xray_ext
   systemctl daemon-reload
 fi
 [ -x /usr/local/bin/xray ] || log "WARNING: binary xray belum ada"
