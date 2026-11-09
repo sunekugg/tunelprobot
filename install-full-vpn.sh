@@ -323,9 +323,13 @@ else
   fi
   GIT_TERMINAL_PROMPT=0 git clone --branch "$BRANCH" --depth 1 "$REPO_URL" "$REPO" >>"$LOG" 2>&1 || die "clone repo gagal"
 fi
-python3 -m venv "$REPO/.venv" >>"$LOG" 2>&1
-"$REPO/.venv/bin/pip" install --upgrade pip >>"$LOG" 2>&1
-"$REPO/.venv/bin/pip" install -r "$REPO/requirements.txt" >>"$LOG" 2>&1
+# hot-sync: bot menulis akun xray via script ini (wajib ada, snapshot tak menyertakannya)
+cp -f "$REPO/scripts/xray_hot_sync.py" /usr/local/bin/xray-hot-sync.py 2>/dev/null && chmod +x /usr/local/bin/xray-hot-sync.py || log "PERINGATAN: xray_hot_sync.py tak ada di repo"
+ python3 -m venv "$REPO/.venv" >>"$LOG" 2>&1
+ "$REPO/.venv/bin/pip" install --upgrade pip >>"$LOG" 2>&1
+ "$REPO/.venv/bin/pip" install -r "$REPO/requirements.txt" >>"$LOG" 2>&1
+# sinkronkan akun xray dari DB (idempotent: 0 akun = config tetap 0)
+"$REPO/.venv/bin/python" -c "import asyncio,sys; sys.path.insert(0,'$REPO'); from bot.system_manager import sync_xray_clients; asyncio.run(sync_xray_clients())" >>"$LOG" 2>&1 || log "sinkron xray awal gagal (abaikan bila DB masih kosong)"
 
 # config.env (idempotent: jangan timpa jika sudah ada)
 if [ ! -f "$DATA/config.env" ]; then
