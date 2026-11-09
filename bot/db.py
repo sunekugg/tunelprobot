@@ -458,13 +458,11 @@ async def check_daily_creation_quota(tg_id: int) -> tuple[bool, int, int, str]:
                         if key not in events_map or dt > events_map[key]:
                             events_map[key] = dt
 
-        async with db.execute("SELECT id, username, created_at FROM accounts WHERE tg_id = ?", (tg_id,)) as cur:
-            for aid, uname, c_at in await cur.fetchall():
-                dt = _parse_any_wib_dt(c_at, 0)
-                if dt:
-                    key = f"u:{uname}" if uname else f"a:{aid}"
-                    if key not in events_map or dt > events_map[key]:
-                        events_map[key] = dt
+    # Limit harian hanya dihitung dari creation_history (tabel pelacakan pembuatan
+    # yang di-reset oleh reset_*_creation_limits). Tidak menghitung dari
+    # accounts.created_at — kalau ikut dihitung, reset limit tak berfungsi karena
+    # akun yang masih hidup terus terhitung lagi. accounts.created_at tetap dipakai
+    # di tempat lain (umur/durasi/tampilan).
 
     if window_td is None:
         valid_dts = sorted(events_map.values())
