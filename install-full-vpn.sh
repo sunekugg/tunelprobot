@@ -175,6 +175,13 @@ if [ -f /etc/systemd/system/xray.service ]; then
   grep -q "^User=root" /etc/systemd/system/xray.service || sed -i '/\[Service\]/a User=root' /etc/systemd/system/xray.service
 fi
 
+# Patch haproxy: tambah bind :80 (HTTP Custom non-TLS). Snapshot server lama
+# tak punya listener :80 (hanya 443/8443/2053/2083/442) -> port 80 Connection lost.
+if [ -f /etc/haproxy/haproxy.cfg ] && ! grep -qE "bind .*:80( |$)" /etc/haproxy/haproxy.cfg; then
+  sed -i '/bind \*:442/a\    bind *:80' /etc/haproxy/haproxy.cfg
+  log "tambah bind :80 di haproxy (HTTP Custom)"
+fi
+
 # Auto-ganti domain lama -> domain baru di semua config proxy (SNI/cert cocok)
 if [ -z "$OLD_DOMAIN" ]; then
   OLD_DOMAIN="$(grep -rhoE "[a-zA-Z0-9.-]+\.(web\.id|my\.id|com|net|org|vip)" /tmp/snap/_usr_local_etc_xray_config.json 2>/dev/null | grep -vE "github|xtls|acme|matt\.ucc|dropbear" | head -1 || true)"
