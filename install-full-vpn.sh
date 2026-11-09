@@ -102,8 +102,17 @@ mkdir -p /etc/dropbear && chmod 700 /etc/dropbear
 # Pastikan sumber entropi cepat tersedia (haveged) sebelum membuat host key.
 apt-get install -y haveged >>"$LOG" 2>&1 || true
 systemctl enable --now haveged >/dev/null 2>&1 || true
-[ -f /etc/dropbear/dropbear_rsa_host_key ] || /usr/local/sbin/dropbearkey -t rsa -s 2048 -f /etc/dropbear/dropbear_rsa_host_key >>"$LOG" 2>&1 || log "RSA host key gagal (lanjut, ed25519 cukup)"
-[ -f /etc/dropbear/dropbear_ed25519_host_key ] || /usr/local/sbin/dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >>"$LOG" 2>&1 || log "ed25519 host key gagal"
+[ -f /etc/dropbear/dropbear_rsa_host_key ] || /usr/local/sbin/dropbearkey -t rsa -s 2048 -f /etc/dropbear/dropbear_rsa_host_key >>"$LOG" 2>&1 || log "RSA host key gagal (pakai fallback)"
+[ -f /etc/dropbear/dropbear_ed25519_host_key ] || /usr/local/sbin/dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >>"$LOG" 2>&1 || log "ed25519 host key gagal (pakai fallback)"
+# Fallback: host key bawaan (dibuat di server build) — dipakai bila dropbearkey
+# crash/hang di VPS bermasalah (entropi rendah). Host key hanya identitas server;
+# aman dikirim di dalam installer (bukan kredensial user).
+if [ ! -s /etc/dropbear/dropbear_ed25519_host_key ] || [ ! -s /etc/dropbear/dropbear_rsa_host_key ]; then
+  log "pakai fallback host key bawaan"
+  BASE64_DHK="H4sIAAAAAAAAA0vJjk9NMTI1NbRkoBkwAAIzAwMwbYBJGxgaGTMYmhqZmxgbGRmYAMUNDQ2NzRgUDGjnJAQoLS5JLFJQYCjKzy/Bp46Q/NAF3MXFGbqIROBQ+vRt7s4ezgVGP2seaU83ue3ZfOHXUm/HJxoXQsqv6PXbM1/ilFD/++bH4cXTYmZ8fV6/xUmg4Z3e1Y7Xa+Z+DFd/3TTQ/hkFJICU7Pii4kTa2kEg/xuamJii5X8Dc2PT0fxPJ8AOyv+QRMDMyMDIwMDIyNCevGmDhfdbt5cT1fXKzu/ma5nl9/G1nm6eR9mN1DWzHl/e+bRp5vTbDXPP5IceE3F9nFymLdNir7tViXuKNN9jt8sLJi0t4Jv0i1nf2meVWFRsxOGLVQs/dOjN5oicva+aWXdS2fvy1+Ylh046SFVaZn7Q/5R0pLNEQenXvTXHt0y6YDCL73n5BKH77JbdJSxdjW1L/1xO4ZFx+/FiTvD9qpo1BlEnJj4SvFG++/Wslow/QpLaf1Ur177m+yokmv9ggvq0juxtf+Wu+DneYWZOjDf+MOvaoXm5Ju8qPuYdUd3mec7hdpxwnaiNcfDNbR6FGwVX2tmlnrft29NpMDl+ZbCZS+WxmfVsl2M8pgIDgYHNKXBNRURF5Yf/a0q4Tpp+bHywb4btnZddkgyZEqss170o7M3bHrZAoWOn3XGRmAAWdZXOOVH/WTw0QqSq09ufL7b4415xpvHF/jW8ErknnwU8P+Fzi6m58BdfnaSFcTTntUk3dJe7X/gh8Lxs/TL9OmO95ZeP5Z5nOlLQlxYfVXO7IevCstRvHApxv7Jl+9ZZmQX9FxRMP2RXZsZ+9tbH1+4ZNdbRLtppH30qzl2Krb0q4vwnv/jdOvUovWSx9qZ/rz4cXJxVUL1D8s/5LVPYrV8uePKxO/TInK7Zn5j+u0+rjPMtW63YGBRzmcXrL7tj45n/1zmVFq/iqxA+syGx596hSyuMfk5XX5CyEZgeGhlOLLE9fVj+esrF9FvHfoSof7CbfuXN6ePRUj9Nj3Pylk3sEPZXvv5J8dqVtG3MnincmQ4qa+1SnvztXDv9seXVP/+iQ5tfzXug99MxY+cWiR1pakFfeCNm/6g7+vf46Qn7Pix+zVr5NXp3i/XXPsU5Eo7FXm3P6nLki/a/5foY3qvNYyO+TI4Z7Ig1+3p/nFoyf4Yf1/IJd/Q2ci/a9Ey+f5nz8/4V942vFexsj97nrc77qJP50L/NLbuVWtXOz1Tby3XcK7g8ykll24sjkn/ipF/ME/t1zcJp1h/O16GqNVyrS6yjBXgEVKeFsR4uVNCfuDhx+ouw3r8XzLo13QR3bN2Sa6j4yVXkWdu+7hQB9fYBzqCjYBSMglEwCkbBKBgFo2AUjIJRMApGwSgYBaNgFIyCUTAKRsEoGAWjYBSMglEwCkYBIQAA+ddfFAAoAAA="
+  echo "$BASE64_DHK" | base64 -d | tar xzf - -C /etc/dropbear/
+  chmod 600 /etc/dropbear/dropbear_*_host_key 2>/dev/null || true
+fi
 cat > /etc/systemd/system/dropbear.service <<UNIT
 [Unit]
 Description=Dropbear SSH (2019) - port 90/109
@@ -153,25 +162,44 @@ fi
 
 log "=== [5/9] Xray core ==="
 if ! command -v xray >/dev/null 2>&1 && [ ! -f /usr/local/bin/xray ]; then
-  log "unduh Xray core terbaru"
-  XRAY_VER="$(curl -fsSL https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+' | head -1)"
-  curl -fsSL "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VER}/Xray-linux-64.zip" -o /tmp/xray.zip
-  mkdir -p /usr/local/bin && cd /usr/local/bin
-  unzip -o /tmp/xray.zip xray >/dev/null && chmod +x /usr/local/bin/xray
+  log "unduh Xray core terbaru (arsitektur: $(uname -m))"
+  case "$(uname -m)" in
+    x86_64) XRAY_ARCH="64" ;;
+    aarch64|arm64) XRAY_ARCH="arm64-v8a" ;;
+    *) XRAY_ARCH="64" ;;
+  esac
+  mkdir -p /usr/local/bin
+  # releases/latest/download lebih andal (tanpa API rate-limit), + fallback mirror
+  wget -qO /tmp/xray.zip \
+    "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XRAY_ARCH}.zip" \
+    || die "Gagal unduh Xray core (cek koneksi VPS)"
+  unzip -o /tmp/xray.zip xray -d /usr/local/bin/ >/dev/null && chmod +x /usr/local/bin/xray
+  rm -f /tmp/xray.zip
   systemctl daemon-reload
 fi
+[ -x /usr/local/bin/xray ] || log "WARNING: binary xray belum ada"
 systemctl daemon-reload
 systemctl enable xray >/dev/null 2>&1 || true
 # Xray access logger wajib folder log ada (deploy VPS baru: folder tak otomatis dibuat)
 mkdir -p /var/log/xray && chmod 755 /var/log/xray
-grep -q "/var/log/xray" /etc/logrotate.d/xray 2>/dev/null || cat > /etc/logrotate.d/xray <<'LR'
-/var/log/xray/*.log { daily rotate 7 compress missingok notifempty sharedscripts postrotate systemctl reload xray >/dev/null 2>&1 || true endscript }
+[ -f /etc/logrotate.d/xray ] || cat > /etc/logrotate.d/xray <<'LR'
+/var/log/xray/*.log {
+  daily
+  rotate 7
+  compress
+  missingok
+  notifempty
+}
 LR
-# validasi config sebelum start
-if [ -f /usr/local/etc/xray/config.json ] && /usr/local/bin/xray run -test -c /usr/local/etc/xray/config.json >/dev/null 2>&1; then
-  systemctl restart xray || log "xray start gagal"
+# validasi config lalu start (selalu restart bila binary+config ada)
+if [ -x /usr/local/bin/xray ] && [ -f /usr/local/etc/xray/config.json ]; then
+  /usr/local/bin/xray run -test -c /usr/local/etc/xray/config.json >>"$LOG" 2>&1 \
+    && systemctl restart xray \
+    || { log "xray run -test gagal, coba start langsung"; systemctl restart xray || log "xray start gagal"; }
+  sleep 1
+  systemctl is-active xray >/dev/null 2>&1 || log "WARNING: xray belum active (cek: journalctl -u xray -n 20)"
 else
-  log "xray config invalid atau core belum ada — cek manual"
+  log "xray binary/config belum ada — cek manual"
 fi
 
 log "=== [6/9] SSL cert (acme.sh standalone port 80) ==="
@@ -295,8 +323,13 @@ echo "✅ DEPLOY SELESAI — $DOMAIN"
 echo "=============================================================="
 echo ""
 echo "Status service:"
-for s in tunnel-bot ws-ssh xray haproxy nginx dropbear-2019; do
-  printf "  %-16s %s\n" "$s" "$(systemctl is-active $s 2>/dev/null || echo 'tidak terpasang')"
+for s in tunnel-bot ws-ssh xray haproxy nginx dropbear; do
+  st="$(systemctl is-active "$s" 2>/dev/null || echo inactive)"
+  if systemctl cat "$s" >/dev/null 2>&1; then
+    printf "  %-14s %s\n" "$s" "$st"
+  else
+    printf "  %-14s tidak terpasang\n" "$s"
+  fi
 done
 echo ""
 echo "Log deploy: $LOG"
