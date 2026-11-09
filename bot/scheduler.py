@@ -235,7 +235,7 @@ async def scheduler_loop(bot: Bot):
 
                 active_ip_set = {ip for _, ip in ssh_sessions.get(uname, [])} if atype == "ssh" else set(xray_ips.get(uname, set()))
                 if len(active_ip_set) > lim_ip:
-                    viol = int(acc.get("violation_count") or 0) + 1
+                    viol = int(acc.get("violations") or 0) + 1
                     if viol >= max_viol:
                         async with aiosqlite.connect(DB_PATH, timeout=15) as db:
                             await db.execute("DELETE FROM accounts WHERE id = ?", (aid,))
@@ -263,7 +263,7 @@ async def scheduler_loop(bot: Bot):
                         lu_str = (now_dt + datetime.timedelta(minutes=lock_min)).strftime("%Y-%m-%d %H:%M:%S")
                         async with aiosqlite.connect(DB_PATH, timeout=15) as db:
                             await db.execute(
-                                "UPDATE accounts SET is_locked = 1, locked_until = ?, violation_count = ? WHERE id = ?",
+                                "UPDATE accounts SET is_locked = 1, locked_until = ?, violations = ? WHERE id = ?",
                                 (lu_str, viol, aid)
                             )
                             await db.commit()
