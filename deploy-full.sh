@@ -10,6 +10,7 @@ set -euo pipefail
 BOT_TOKEN=""        # Token bot Telegram dari @BotFather
 ADMIN_ID=""         # ID admin utama (angka Telegram)
 DOMAIN=""           # Domain VPS baru (A record sudah diarahkan ke IP ini)
+OLD_DOMAIN=""       # (Opsional) domain di config lama, jika mau dipaksa ganti. Kosongkan = deteksi otomatis
 REPO_URL="https://github.com/sunekugg/tunelprobot.git"   # URL repo
 BRANCH="dev"
 GH_TOKEN=""         # Opsional: token GitHub (kosongkan utk repo publik)
@@ -108,7 +109,9 @@ done
 chmod +x /usr/local/bin/ws-ssh.py /usr/local/bin/vpn-bw-manager.py /usr/local/bin/tunnel 2>/dev/null || true
 
 # Auto-ganti domain lama -> domain baru di semua config proxy (SNI/cert cocok)
-OLD_DOMAIN="$(grep -rhoE "[a-zA-Z0-9.-]+\.(web\.id|my\.id|com|net|org|vip)" /tmp/snap/_usr_local_etc_xray_config.json 2>/dev/null | grep -vE "github|xtls|acme|matt\.ucc|dropbear" | head -1 || true)"
+if [ -z "$OLD_DOMAIN" ]; then
+  OLD_DOMAIN="$(grep -rhoE "[a-zA-Z0-9.-]+\.(web\.id|my\.id|com|net|org|vip)" /tmp/snap/_usr_local_etc_xray_config.json 2>/dev/null | grep -vE "github|xtls|acme|matt\.ucc|dropbear" | head -1 || true)"
+fi
 if [ -n "$OLD_DOMAIN" ] && [ "$OLD_DOMAIN" != "$DOMAIN" ]; then
   log "ganti domain $OLD_DOMAIN -> $DOMAIN di config proxy"
   sed -i "s/${OLD_DOMAIN}/${DOMAIN}/g" \
@@ -116,6 +119,8 @@ if [ -n "$OLD_DOMAIN" ] && [ "$OLD_DOMAIN" != "$DOMAIN" ]; then
     /etc/haproxy/haproxy.cfg \
     /etc/nginx/nginx.conf \
     /etc/nginx/conf.d/vpn-multiplex.conf 2>/dev/null || true
+else
+  log "domain config sudah sesuai ($DOMAIN), tidak diganti"
 fi
 
 log "=== [5/9] Xray core ==="
