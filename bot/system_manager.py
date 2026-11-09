@@ -1335,6 +1335,15 @@ def get_cluster_node_stats(server_id: int) -> dict:
 
 _SYS_USERS = {"root", "sshd", "dropbear", "nobody", "daemon", "www-data"}
 
+def _read_ipmap() -> dict[str, dict]:
+    """Baca /run/ws_ssh_ipmap.json → {port_ws_lokal: {ip, ts}} (IP asli klien)."""
+    try:
+        with open("/run/ws_ssh_ipmap.json") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
 def _read_dropbear_auth_map() -> dict[str, tuple[str, str]]:
     """Baca log dropbear (journal + auth.log/syslog fallback) → {pid_dropbear: (user, remote_ip)}.
 
@@ -1342,6 +1351,18 @@ def _read_dropbear_auth_map() -> dict[str, tuple[str, str]]:
     (ada timestamp & PID ganda). Pola: dropbear\\[(\\d+)\\]: .*Password auth succeeded for '([^']+)' from (\\S+)$
     """
     pid_map: dict[str, tuple[str, str]] = {}
+    ipmap = _read_ipmap()  # {port_ws_lokal: {ip, ts}} — sumber IP asli klien
+
+    def resolve_ip(raw_ip: str, raw_port: str | None) -> str:
+        # Journal mencatat peer dropbear = 127.0.0.1:<port_ws>. <port_ws> adalah
+        # key di ipmap yang menyimpan IP asli klien (di-set ws-ssh saat meneruskan).
+        ip = raw_ip.strip("[]")
+        if ip in ("127.0.0.1", "::1") and raw_port and raw_port in ipmap:
+            real = ipmap[raw_port].get("ip")
+            if real:
+                return real
+        return ip
+
     # Sumber 1: journalctl -u dropbear (dropbear unit log ke journal, bukan auth.log)
     try:
         out = subprocess.check_output(
@@ -1354,7 +1375,7 @@ def _read_dropbear_auth_map() -> dict[str, tuple[str, str]]:
                 ln,
             )
             if m:
-                ip = m.group(3).strip("[]")
+                ip = resolve_ip(m.group(3), m.group(4))
                 pid_map[m.group(1)] = (m.group(2), ip)
     except Exception:
         pass
@@ -1376,7 +1397,7 @@ def _read_dropbear_auth_map() -> dict[str, tuple[str, str]]:
                     ln,
                 )
                 if m:
-                    ip = m.group(3).strip("[]")
+                    ip = resolve_ip(m.group(3), m.group(4))
                     pid_map[m.group(1)] = (m.group(2), ip)
         except Exception:
             pass
