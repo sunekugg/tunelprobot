@@ -59,6 +59,16 @@ SNAP_FILES=(
 )
 
 log "=== [1/9] Persiapan sistem ==="
+# Bersihkan installer LAMA (tgbot-vpn) bila ada — mencegah bentrok service/port.
+# Bot aktif sekarang adalah /opt/tunnel-bot (tunnel-bot.service).
+if [ -d /root/tgbot-vpn ] || systemctl list-unit-files 2>/dev/null | grep -q "^tgbot-vpn"; then
+  log "hapus instalasi lama tgbot-vpn"
+  systemctl stop tgbot-vpn 2>/dev/null || true
+  systemctl disable tgbot-vpn 2>/dev/null || true
+  rm -f /etc/systemd/system/tgbot-vpn.service
+  rm -f /etc/cron.d/vpn-auto-expired /usr/local/bin/check-vpn-expired.py
+  systemctl daemon-reload
+fi
 export DEBIAN_FRONTEND=noninteractive
 timedatectl set-timezone Asia/Jakarta 2>/dev/null || ln -sf /usr/share/zoneinfo/Asia/Jakarta /etc/localtime
 modprobe nf_conntrack 2>/dev/null || true
