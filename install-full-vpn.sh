@@ -117,13 +117,19 @@ if [ ! -s /etc/dropbear/dropbear_ed25519_host_key ] || [ ! -s /etc/dropbear/drop
   chmod 600 /etc/dropbear/dropbear_*_host_key 2>/dev/null || true
   rm -f /etc/dropbear/dk_rsa /etc/dropbear/dk_ed25519
 fi
+# Buat ExecStart hanya sebut host key yang BENAR-BENAR ada (mencegah
+# 'Too many hostkeys' / key hilang saat restart/re-install).
+DHK_R="-r /etc/dropbear/dropbear_rsa_host_key"
+DHK_E="-r /etc/dropbear/dropbear_ed25519_host_key"
+[ -s /etc/dropbear/dropbear_rsa_host_key ]     || DHK_R=""
+[ -s /etc/dropbear/dropbear_ed25519_host_key ] || DHK_E=""
 cat > /etc/systemd/system/dropbear.service <<UNIT
 [Unit]
 Description=Dropbear SSH (2019) - port 90/109
 After=network.target
 [Service]
 Type=forking
-ExecStart=/usr/local/sbin/dropbear -EF -p 90 -p 109 -b /etc/dropbear/issue.net -W 65536 -r /etc/dropbear/dropbear_rsa_host_key -r /etc/dropbear/dropbear_ed25519_host_key
+ExecStart=/usr/local/sbin/dropbear -EF -p 90 -p 109 -b /etc/dropbear/issue.net -W 65536 $DHK_R $DHK_E
 Restart=always
 RestartSec=2
 [Install]
