@@ -1638,6 +1638,7 @@ async def cb_adm_login_notif(call: CallbackQuery):
     notif_ca = (await get_setting("notif_create_account")) == "1"
     notif_exp = (await get_setting("notif_expired_user")) == "1"
     en_login = (await get_setting("login_notif_enabled")) == "1"
+    en_login_ssh = (await get_setting("login_notif_ssh_enabled")) == "1"
     en_login_xray = (await get_setting("login_notif_xray_enabled")) == "1"
     interval = int(await get_setting("login_notif_interval_min") or "0")
     show_ip = (await get_setting("show_ip_in_notif")) == "1"
@@ -1666,6 +1667,7 @@ async def cb_adm_login_notif(call: CallbackQuery):
         [InlineKeyboardButton(text=f"1) Buat Akun  [{tg(notif_ca)}]", callback_data="adm_notif_create")],
         [InlineKeyboardButton(text=f"2) Expired  [{tg(notif_exp)}]", callback_data="adm_notif_expired")],
         [InlineKeyboardButton(text=f"3) Login  [{tg(en_login)}]", callback_data="adm_login_toggle")],
+        [InlineKeyboardButton(text=f"   └ Login SSH  [{tg(en_login_ssh)}]", callback_data="adm_login_ssh_toggle")],
         [InlineKeyboardButton(text=f"   └ Login Xray  [{tg(en_login_xray)}]", callback_data="adm_login_xray_toggle")],
         [InlineKeyboardButton(text=f"4) Report Online  ({interval} mnt)", callback_data="adm_report_interval")],
         [InlineKeyboardButton(text="🧪 Kirim Report Sekarang", callback_data="adm_report_now")],
@@ -1717,6 +1719,17 @@ async def cb_adm_login_xray_toggle(call: CallbackQuery):
     await set_setting("login_notif_xray_enabled", new_val)
     await generate_portable_backup_sh()
     await call.answer("🟢 Notif Login Xray DIAKTIFKAN!" if new_val == "1" else "🔴 Notif Login Xray DINONAKTIFKAN! (IP Xray belum tersedia)", show_alert=True)
+    await cb_adm_login_notif(call)
+
+@router.callback_query(F.data == "adm_login_ssh_toggle")
+async def cb_adm_login_ssh_toggle(call: CallbackQuery):
+    if not await _guard_admin(call):
+        return
+    cur = await get_setting("login_notif_ssh_enabled")
+    new_val = "0" if cur == "1" else "1"
+    await set_setting("login_notif_ssh_enabled", new_val)
+    await generate_portable_backup_sh()
+    await call.answer("🟢 Notif Login SSH DIAKTIFKAN!" if new_val == "1" else "🔴 Notif Login SSH DINONAKTIFKAN!", show_alert=True)
     await cb_adm_login_notif(call)
 
 @router.callback_query(F.data == "adm_toggle_showip")

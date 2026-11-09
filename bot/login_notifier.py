@@ -127,9 +127,11 @@ async def detect_and_notify_new_logins(bot: Bot, ssh_sess: dict, xray_ips: dict)
         cur_snap = _get_online_snapshot(ssh_sess, xray_ips)
         show_ip = (await get_setting("show_ip_in_notif")) == "1"
 
-        # Notifikasi login Xray punya saklar sendiri (default OFF): Real IP Xray
-        # belum tersedia (build v26.10.31 tak baca XFF), jadi matikan biar tak spam
-        # baris "dari •••" tanpa makna. SSH tetap mengikuti login_notif_enabled.
+        # Notifikasi login punya saklar terpisah utk SSH & Xray. Default OFF: Real
+        # IP Xray belum tersedia (build v26.10.31 tak baca XFF), jadi Xray matikan
+        # biar tak spam baris "dari •••" tanpa makna.
+        if (await get_setting("login_notif_ssh_enabled")) != "1":
+            cur_snap["ssh"] = set()
         if (await get_setting("login_notif_xray_enabled")) != "1":
             cur_snap["xray"] = set()
 

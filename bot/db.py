@@ -36,6 +36,7 @@ DEFAULT_SETTINGS = {
     "notif_create_account": "1",
     "notif_expired_user": "1",
     "login_notif_enabled": "0",
+    "login_notif_ssh_enabled": "0",
     "login_notif_xray_enabled": "0",
     "login_notif_interval_min": "0",
     "show_ip_in_notif": "1",
