@@ -16,14 +16,16 @@ import string
 import uuid
 import aiosqlite
 from aiogram import Router, F
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from .config import DB_PATH, DOMAIN, RESERVED_USERNAMES, now_wib, apply_prefix, USERNAME_PREFIX
 from .db import (
     ensure_user, is_user_admin, get_setting, get_effective_limit_ip,
     check_daily_creation_quota, record_account_creation, get_effective_duration, add_log,
-    get_servers_with_usage, get_server_by_id
+    get_servers_with_usage, get_server_by_id,
+    try_register_referral, reward_referral_on_first_account, get_ref_stats,
+    try_consume_bonus_create, check_creation_allowed, get_user_bonus_create,
 )
 from .keyboards import main_menu_kb, cancel_kb, server_picker_kb
 from .force_join import check_user_membership, invalidate_join_cache
@@ -89,9 +91,9 @@ async def cb_srv_full_alert(call: CallbackQuery):
 @router.callback_query(F.data.in_({"trial_ssh", "trial_trojan", "trial_vless", "trial_vmess", "create_ssh", "create_xray:trojan", "create_xray:vless", "create_xray:vmess"}))
 async def cb_choose_server_first(call: CallbackQuery, state: FSMContext):
     uid = call.from_user.id
-    ok, used, max_lim, reset_str = await check_daily_creation_quota(uid)
-    if not ok and not await is_user_admin(uid):
-        await call.answer(f"⚠️ Batas pembuatan akun Anda ({used}/{max_lim}) sudah penuh!\nReset otomatis pada: {reset_str}", show_alert=True)
+    allowed, deny_msg = await check_creation_allowed(uid)
+    if not allowed and not await is_user_admin(uid):
+        await call.answer(f"⚠️ {deny_msg}", show_alert=True)
         return
     servers = await get_servers_with_usage(only_active=True)
     act = call.data.replace(":", "_")
@@ -120,9 +122,9 @@ async def cb_picked_server(call: CallbackQuery, state: FSMContext):
     if act.startswith("trial_"):
         proto = act.replace("trial_", "")
         uid = call.from_user.id
-        ok, used, max_lim, reset_str = await check_daily_creation_quota(uid)
-        if not ok and not await is_user_admin(uid):
-            await call.answer(f"⚠️ Kuota pembuatan akun Anda ({used}/{max_lim}) habis! Reset: {reset_str}", show_alert=True)
+        allowed, deny_msg = await check_creation_allowed(uid)
+        if not allowed and not await is_user_admin(uid):
+            await call.answer(f"⚠️ {deny_msg}", show_alert=True)
             return
 
         await call.answer("⏳ Sedang membuat akun trial...")
@@ -144,7 +146,7 @@ async def cb_picked_server(call: CallbackQuery, state: FSMContext):
                     (uid, proto, uname, u_uuid, exp_str, created_str, sid)
                 )
                 await db.commit()
-            await record_account_creation(uid, proto, uname)
+            await record_account_creation(uid, proto, uname, bot=call.bot)
             await sync_xray_by_server(sid)
             await generate_portable_backup_sh()
             city, isp = await get_isp_info()
@@ -170,7 +172,7 @@ async def cb_picked_server(call: CallbackQuery, state: FSMContext):
                     (uid, uname_ssh, pwd_ssh, exp_str, created_str, sid)
                 )
                 await db.commit()
-            await record_account_creation(uid, "ssh", uname_ssh)
+            await record_account_creation(uid, "ssh", uname_ssh, bot=call.bot)
             await generate_portable_backup_sh()
             text, kb = format_ssh_output(s_dom, uname_ssh, pwd_ssh, lim_ip, exp_disp, show_pass=True)
             await add_log(uid, "CREATE_TRIAL_SSH", f"User: {uname_ssh} (Srv #{sid}, Exp: {exp_str})")
@@ -233,10 +235,10 @@ async def fsm_xray_remark(message: Message, state: FSMContext):
         return
 
     uid = message.from_user.id
-    ok, used, max_lim, reset_str = await check_daily_creation_quota(uid)
-    if not ok and not await is_user_admin(uid):
+    allowed, deny_msg = await check_creation_allowed(uid)
+    if not allowed and not await is_user_admin(uid):
         await state.clear()
-        await message.answer(f"⚠️ Batas pembuatan akun ({used}/{max_lim}) habis. Reset pada: <code>{reset_str}</code>")
+        await message.answer(f"⚠️ {deny_msg}")
         return
 
     await state.clear()
@@ -260,7 +262,7 @@ async def fsm_xray_remark(message: Message, state: FSMContext):
         )
         await db.commit()
 
-    await record_account_creation(uid, proto, remark)
+    await record_account_creation(uid, proto, remark, bot=message.bot)
     await sync_xray_by_server(sid)
     await generate_portable_backup_sh()
     city, isp = await get_isp_info()
@@ -371,7 +373,7 @@ async def cb_confirm_ssh(call: CallbackQuery, state: FSMContext):
         )
         await db.commit()
 
-    await record_account_creation(uid, "ssh", uname)
+    await record_account_creation(uid, "ssh", uname, bot=call.bot)
     await generate_portable_backup_sh()
     text, kb = format_ssh_output(s_dom, uname, pwd_val, lim_ip, exp_disp, show_pass=True)
     await add_log(uid, "CREATE_SSH", f"Username: {uname} (Srv #{sid}, Buat: {created_str}, Exp: {exp_str})")
@@ -2070,8 +2072,10 @@ async def _safe_edit(call: CallbackQuery, text: str, reply_markup: InlineKeyboar
         except Exception:
             return None
 
-async def _send_welcome_screen(bot, chat_id: int, uid: int, full_name: str, edit_call: CallbackQuery | None = None):
+async def _send_welcome_screen(bot, chat_id: int, uid: int, full_name: str, edit_call: CallbackQuery | None = None, extra_header: str = ""):
     text, kb = await _build_welcome_text_and_kb(uid, full_name, escape_custom=False)
+    if extra_header:
+        text = extra_header + "\n" + text
     photo_id = (await get_setting("welcome_photo_id") or "").strip()
     has_local_banner = os.path.exists(WELCOME_BANNER_PATH) and os.path.getsize(WELCOME_BANNER_PATH) > 0
 
@@ -2402,7 +2406,7 @@ from .sub_server import (
 )
 from .system_manager import rank_servers_by_health, sync_xray_by_server
 
-async def cmd_start(message: Message, state: FSMContext | None = None):
+async def cmd_start(message: Message, state: FSMContext | None = None, command: CommandObject | None = None):
     uid = message.from_user.id if message.from_user else message.chat.id
     chat_id = message.chat.id
     full_name = (message.from_user.full_name if message.from_user else "") or "Pengguna"
@@ -2414,9 +2418,21 @@ async def cmd_start(message: Message, state: FSMContext | None = None):
         except Exception:
             pass
 
+    # --- Referral: tangkap ?start=ref_<id> SEBELUM _ensure_user_db memasukkan user ---
+    ref_code = (command.args or "") if command else ""
+    referral_notice = ""
+    if ref_code:
+        ok_ref = await try_register_referral(uid, ref_code)
+        if ok_ref:
+            referral_notice = (
+                f"🎁 <b>Kamu diundang oleh teman!</b>\n"
+                f"Referral dari <code>{ref_code.split('_', 1)[1]}</code> tercatat.\n"
+                f"Bonus +1x Create akan dikirim ke pengundangmu begitu kamu membuat akun pertama.\n\n"
+            )
+
     await _ensure_user_db(uid, uname, full_name)
     # Langsung kirim menu /start baru tanpa menghapus pesan atau menu sebelumnya
-    await _send_welcome_screen(message.bot, chat_id, uid, full_name, edit_call=None)
+    await _send_welcome_screen(message.bot, chat_id, uid, full_name, edit_call=None, extra_header=referral_notice)
 
 async def cb_menu_main(call: CallbackQuery, state: FSMContext | None = None):
     uid = call.from_user.id
@@ -2863,6 +2879,44 @@ async def cb_show_smart_sub_qr(call: CallbackQuery):
         caption=cap,
         reply_markup=kb_qr
     )
+
+# ===== REFERRAL OTOMATIS ====
+@router.callback_query(F.data == "ref_menu")
+async def cb_ref_menu(call: CallbackQuery):
+    if not await is_user_admin(call.from_user.id) and await get_setting("feat_referral") != "1":
+        await call.answer("Fitur referral sedang nonaktif.", show_alert=True)
+        return
+    await call.answer()
+    uid = call.from_user.id
+    # Dapatkan username bot untuk link unik
+    bot_username = ""
+    try:
+        me = await call.bot.get_me()
+        bot_username = me.username or ""
+    except Exception:
+        pass
+    stats = await get_ref_stats(uid)
+    sukses, sisa, pending = stats
+    link = f"https://t.me/{bot_username}?start=ref_{uid}" if bot_username else "-"
+    text = (
+        f"🎁 <b>Referral / Undang Teman</b>\n\n"
+        f"Undang teman untuk membuat akun di bot ini, dan dapatkan <b>+1x Kuota Buat Akun</b> "
+        f"untuk setiap teman yang <b>berhasil membuat akun pertama</b>!\n\n"
+        f"🔗 <b>Link Undangan Kamu:</b>\n<code>{link}</code>\n\n"
+        f"📊 <b>Statistik:</b>\n"
+        f"• ✅ Referral Sukses: <b>{sukses}</b>\n"
+        f"• ⏳ Menunggu Buat Akun: <b>{pending}</b>\n"
+        f"• 💰 Saldo Bonus (+1x Create): <b>{sisa}</b>\n\n"
+        f"<i>Gunakan tombol 📲 Bagikan Link untuk mengirim linkmu ke teman di Telegram.</i>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📲 Bagikan Link", url=f"https://t.me/share/url?url={link}" if bot_username else "https://t.me")],
+        [InlineKeyboardButton(text="⬅️ Kembali", callback_data="menu_main")]
+    ])
+    try:
+        await call.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        await call.message.answer(text, reply_markup=kb)
 
 for _h in list(router.callback_query.handlers):
     if getattr(_h.callback, "__name__", "") in (

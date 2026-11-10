@@ -2736,6 +2736,7 @@ async def _render_adm_feat_toggles() -> tuple[str, InlineKeyboardMarkup]:
     f_heal = (await get_setting("feat_auto_heal")) != "0"
     f_sub = (await get_setting("feat_smart_sub")) != "0"
     f_lb = (await get_setting("feat_smart_lb")) != "0"
+    f_ref = (await get_setting("feat_referral")) != "0"
     cd_sec = await get_setting("bug_scan_cooldown") or "20"
 
     text = (
@@ -2747,6 +2748,7 @@ async def _render_adm_feat_toggles() -> tuple[str, InlineKeyboardMarkup]:
         f"4️⃣ <b>Auto-Heal Service &amp; Notif Server:</b> <code>{'🟢 ON' if f_heal else '🔴 OFF'}</code>\n"
         f"5️⃣ <b>🔗 Smart Subscription Link (Auto-Update):</b> <code>{'🟢 ON' if f_sub else '🔴 OFF'}</code>\n"
         f"6️⃣ <b>⚖️ Smart Load-Balancer &amp; Rekomendasi:</b> <code>{'🟢 ON' if f_lb else '🔴 OFF'}</code>\n"
+        f"7️⃣ <b>🎁 Referral Otomatis (+1x Create):</b> <code>{'🟢 ON' if f_ref else '🔴 OFF'}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "💡 <i>Klik tombol di bawah untuk mengaktifkan (ON) atau menonaktifkan (OFF) masing-masing fitur secara langsung.</i>"
     )
@@ -2776,6 +2778,10 @@ async def _render_adm_feat_toggles() -> tuple[str, InlineKeyboardMarkup]:
             text=f"{'🟢 ON' if f_lb else '🔴 OFF'} — 6. Smart Load-Balancer Server",
             callback_data="adm_toggle_feat:feat_smart_lb"
         )],
+        [InlineKeyboardButton(
+            text=f"{'🟢 ON' if f_ref else '🔴 OFF'} — 7. Referral Otomatis (+1x Create)",
+            callback_data="adm_toggle_feat:feat_referral"
+        )],
         [InlineKeyboardButton(text="🎨 Ganti Tema Tampilan Bot (Tree-Box / Card)", callback_data="adm_ui_theme")],
         [InlineKeyboardButton(text="🩺 Cek Kesehatan Semua Preset Bug", callback_data="adm_check_presets_health")],
         [InlineKeyboardButton(text="🩺 Cek & Auto-Heal Semua Server Sekarang", callback_data="adm_run_heal_now")],
@@ -2795,6 +2801,7 @@ async def cb_adm_toggle_feat(call: CallbackQuery):
         "feat_auto_heal": "Auto-Heal Service & Notif Status Server",
         "feat_smart_sub": "Smart Subscription Link (Auto-Update)",
         "feat_smart_lb": "Smart Load-Balancer & Rekomendasi Server",
+        "feat_referral": "Referral Otomatis (+1x Create per Teman)",
     }
     if key not in allowed_keys:
         return

@@ -4,7 +4,7 @@ import sys
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import Command, StateFilter
+from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, CallbackQuery
@@ -43,7 +43,10 @@ dp.callback_query.middleware(ForceJoinMiddleware())
 # Handler /start, /menu & menu_main terpusat di Root Dispatcher (Prioritas Tertinggi)
 @dp.message(Command("start", "menu"), StateFilter("*"))
 @dp.message(F.text.in_({"✨ Buat Config Baru", "❌ Batal / Reset", "🚀 Menu Utama (/start)"}), StateFilter("*"))
-async def root_cmd_start(message: Message, state: FSMContext):
+async def root_cmd_start(message: Message, state: FSMContext, command: CommandObject | None = None):
+    if command and command.args:
+        await user.cmd_start(message, state, command)
+        return
     await user.cmd_start(message, state)
 
 @dp.callback_query(F.data == "menu_main", StateFilter("*"))

@@ -18,6 +18,8 @@ DEFAULT_SETTINGS = {
     "violation_action": "lock_temp",
     "lock_duration_min": "15",
     "force_join_enabled": "0",
+    "feat_referral": "1",
+    "ref_reward_text": "🎉 <b>BONUS REFERRAL DITERIMA!</b> (+1x Create)\n\nTeman yang Anda undang baru saja membuat akun.\nAnda mendapatkan tambahan <b>+1x Kuota Buat Akun!</b>",
     "feat_self_manage": "1",
     "feat_bug_checker": "1",
     "feat_auto_heal": "1",
@@ -77,6 +79,9 @@ async def init_db():
             custom_limit_ip INTEGER DEFAULT -1,
             trial_date TEXT DEFAULT '',
             trial_count INTEGER DEFAULT 0,
+            referred_by INTEGER DEFAULT 0,
+            ref_rewarded INTEGER DEFAULT 0,
+            bonus_create INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
         await db.execute("""
@@ -118,6 +123,9 @@ async def init_db():
 
         for alter_sql in [
             "ALTER TABLE users ADD COLUMN custom_quota_window TEXT DEFAULT ''",
+            "ALTER TABLE users ADD COLUMN referred_by INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN ref_rewarded INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN bonus_create INTEGER DEFAULT 0",
             "ALTER TABLE accounts ADD COLUMN server_id INTEGER DEFAULT 1",
             "ALTER TABLE accounts ADD COLUMN quota_gb REAL DEFAULT 0",
             "ALTER TABLE accounts ADD COLUMN used_bytes INTEGER DEFAULT 0",
@@ -311,15 +319,58 @@ async def get_effective_quota_window(tg_id: int) -> tuple[int, str]:
     return parse_window_str(g_win)
 
 
-async def record_account_creation(tg_id: int, acc_type: str, username: str):
+async def record_account_creation(tg_id: int, acc_type: str, username: str, bot=None):
     now_ts = int(time.time())
     wib_str = now_wib().strftime("%Y-%m-%d %H:%M:%S")
+    # Bonus referral: bila kuota reguler sedang penuh, pakai 1 saldo bonus (tanpa memakai slot reguler).
+    # Ini choke point tunggal — semua jalur buat akun lewat sini.
+    ok, _, _, _ = await check_daily_creation_quota(tg_id)
+    if not ok:
+        await try_consume_bonus_create(tg_id)
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
         await db.execute(
             "INSERT INTO creation_history (tg_id, acc_type, username, created_ts, created_wib) VALUES (?, ?, ?, ?, ?)",
             (tg_id, acc_type, username, now_ts, wib_str)
         )
         await db.commit()
+    # Reward referral bila ini akun PERTAMA user (ref_rewarded=0). Idempotent: reward_referral
+    # menutup pintu segera setelah dikunci 1, jadi aman dipanggil tiap buat akun.
+    await reward_referral_on_first_account(tg_id, bot=bot)
+
+async def get_user_bonus_create(tg_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH, timeout=15) as db:
+        cur = await db.execute(
+            "SELECT COALESCE(bonus_create,0) FROM users WHERE tg_id = ?", (tg_id,)
+        )
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
+async def check_creation_allowed(tg_id: int) -> tuple[bool, str]:
+    """Gate pembuatan akun. Kuota reguler penuh? Bila ada saldo bonus_create > 0,
+    tetap izinkan (bonus dipakai). Return (allowed, pesan)."""
+    ok, used, max_lim, reset_str = await check_daily_creation_quota(tg_id)
+    if ok:
+        return True, ""
+    bonus = await get_user_bonus_create(tg_id)
+    if bonus > 0:
+        return True, f"⚡ Kuota reguler penuh, tapi Anda punya {bonus}x Bonus Referral — bonus dipakai untuk akun ini."
+    return False, f"Batas pembuatan akun Anda ({used}/{max_lim}) sudah penuh! Reset otomatis pada: {reset_str}"
+
+async def try_consume_bonus_create(tg_id: int) -> bool:
+    """Dipakai saat kuota reguler habis: bila user punya saldo bonus_create > 0,
+    kurangi 1 dan izinkan pembuatan (tanpa memakai kuota reguler). Return True bila bonus terpakai."""
+    async with aiosqlite.connect(DB_PATH, timeout=15) as db:
+        cur = await db.execute(
+            "SELECT COALESCE(bonus_create,0) FROM users WHERE tg_id = ?", (tg_id,)
+        )
+        row = await cur.fetchone()
+        if not row or int(row[0] or 0) <= 0:
+            return False
+        await db.execute(
+            "UPDATE users SET bonus_create = bonus_create - 1 WHERE tg_id = ?", (tg_id,)
+        )
+        await db.commit()
+    return True
 
 async def reset_all_creation_limits():
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
@@ -332,6 +383,89 @@ async def reset_user_creation_limit(tg_id: int):
         await db.execute("DELETE FROM creation_history WHERE tg_id = ?", (tg_id,))
         await db.execute("UPDATE users SET trial_count = 0, trial_date = '' WHERE tg_id = ?", (tg_id,))
         await db.commit()
+
+# === REFERRAL OTOMATIS (bonus +1x create per teman yang buat akun) ===
+
+async def try_register_referral(new_user_id: int, ref_code: str) -> bool:
+    """Saat User B klik deep link ?start=ref_<id>. Catat referred_by bila:
+    - fitur aktif
+    - ref_code valid (ref_<tg_id>)
+    - pengundang ada di DB & bukan diri sendiri
+    - User B BENAR-BENAR BARU (belum terdaftar di users) — anti-curang
+    - User B belum pernah punya referred_by (anti re-referral)
+    """
+    if await get_setting("feat_referral") != "1":
+        return False
+    m = re.match(r"^ref_(\d+)$", str(ref_code).strip())
+    if not m:
+        return False
+    inviter_id = int(m.group(1))
+    if inviter_id == new_user_id:
+        return False
+    async with aiosqlite.connect(DB_PATH, timeout=15) as db:
+        # User B HARUS pengguna baru (belum terdaftar)
+        cur = await db.execute("SELECT 1 FROM users WHERE tg_id = ?", (new_user_id,))
+        if await cur.fetchone():
+            return False
+        # Pengundang harus ada di DB
+        cur = await db.execute("SELECT 1 FROM users WHERE tg_id = ?", (inviter_id,))
+        if not await cur.fetchone():
+            return False
+        await db.execute(
+            "INSERT INTO users (tg_id, referred_by, ref_rewarded, bonus_create) VALUES (?, ?, 0, 0)",
+            (new_user_id, inviter_id),
+        )
+        await db.commit()
+    return True
+
+async def reward_referral_on_first_account(new_user_id: int, bot=None) -> None:
+    """Dipanggil setelah User B sukses membuat akun pertama. Bila referred_by terisi
+    dan ref_rewarded masih 0: kunci ref_rewarded=1 (bonus sekali per teman) dan
+    tambahkan +1 saldo bonus_create ke pengundang, lalu kirim notifikasi."""
+    if await get_setting("feat_referral") != "1":
+        return
+    async with aiosqlite.connect(DB_PATH, timeout=15) as db:
+        cur = await db.execute(
+            "SELECT referred_by, ref_rewarded FROM users WHERE tg_id = ?",
+            (new_user_id,),
+        )
+        row = await cur.fetchone()
+        if not row or not row[0] or int(row[1] or 0) != 0:
+            return
+        inviter_id = int(row[0])
+        await db.execute(
+            "UPDATE users SET ref_rewarded = 1 WHERE tg_id = ?", (new_user_id,)
+        )
+        await db.execute(
+            "UPDATE users SET bonus_create = COALESCE(bonus_create, 0) + 1 WHERE tg_id = ?",
+            (inviter_id,),
+        )
+        await db.commit()
+
+    # Notifikasi ke pengundang (di luar transaksi agar gagal kirim tak balik reward)
+    if bot is not None:
+        from aiogram import Bot
+        try:
+            text = await get_setting("ref_reward_text") or \
+                "🎉 <b>BONUS REFERRAL DITERIMA!</b> (+1x Create)\n\nTeman yang Anda undang baru saja membuat akun."
+            await bot.send_message(inviter_id, text)
+        except Exception:
+            pass  # pengundang mungkin tak pernah /start bot — abaikan
+
+async def get_ref_stats(tg_id: int) -> tuple[int, int, int]:
+    """Return (jumlah_referral_sukses, saldo_bonus_create, jumlah_pending)."""
+    async with aiosqlite.connect(DB_PATH, timeout=15) as db:
+        cur = await db.execute(
+            "SELECT COALESCE(bonus_create,0), "
+            "  (SELECT COUNT(*) FROM users WHERE referred_by = ? AND ref_rewarded = 1), "
+            "  (SELECT COUNT(*) FROM users WHERE referred_by = ? AND ref_rewarded = 0) "
+            "FROM users WHERE tg_id = ?",
+            (tg_id, tg_id, tg_id),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return (0, 0, 0)
+        return (int(row[1] or 0), int(row[0] or 0), int(row[2] or 0))
 
 async def get_effective_duration(tg_id: int) -> str:
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:

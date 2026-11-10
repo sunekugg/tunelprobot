@@ -76,6 +76,9 @@ def main_menu_kb(is_admin: bool = False) -> InlineKeyboardMarkup:
         new_rows.append(r_copy)
 
     extra_rows = []
+    extra_rows.append([
+        InlineKeyboardButton(text="🎁 Referral / Undang Teman", callback_data="ref_menu")
+    ])
     if not has_wc:
         extra_rows.append([
             InlineKeyboardButton(text="🌐 List Wildcard", callback_data="user_wildcard_list"),
