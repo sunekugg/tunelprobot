@@ -710,7 +710,8 @@ def install_udp_stack() -> str:
     _write("/etc/iptables/apply-slowdns-udp.sh", _iptables_script(), 0o755)
     _write("/etc/systemd/system/iptables-restore.service",
            "[Unit]\nDescription=Restore iptables NAT rules\nAfter=network.target\n\n"
-           "[Service]\nType=oneshot\nExecStart=/etc/iptables/apply-slowdns-udp.sh\n\n"
+           "[Service]\nType=oneshot\nRemainAfterExit=yes\n"
+           "ExecStart=/etc/iptables/apply-slowdns-udp.sh\n\n"
            "[Install]\nWantedBy=multi-user.target\n")
 
     # :53 hanya perlu dibebaskan bila ada yang memegangnya di alamat PUBLIK.
