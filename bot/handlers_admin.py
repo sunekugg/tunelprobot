@@ -3173,3 +3173,101 @@ for _h in list(router.callback_query.handlers):
     ):
         router.callback_query.handlers.remove(_h)
         router.callback_query.handlers.insert(0, _h)
+
+# === PANEL SlowDNS & UDP-Custom & UDPGW ===
+from .system_manager import (
+    get_slowdns_pubkey, get_slowdns_ns, install_udp_stack,
+    restart_udp_services, regen_slowdns_key, regen_slowdns_ns,
+)
+
+def _svc_icon(name: str) -> str:
+    try:
+        r = subprocess.run(["systemctl", "is-active", name], stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, text=True, timeout=5)
+        return "🟢 active" if r.stdout.strip() == "active" else "🔴 " + (r.stdout.strip() or "dead")
+    except Exception:
+        return "🔴 n/a"
+
+def _pid_count(name: str) -> str:
+    try:
+        r = subprocess.run(["pgrep", "-c", "-f", f"/usr/local/bin/{name}"],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+        return (r.stdout or "").strip() or "0"
+    except Exception:
+        return "n/a"
+
+async def _render_slowdns_panel(call: CallbackQuery):
+    pub = await asyncio.to_thread(get_slowdns_pubkey)
+    ns = await asyncio.to_thread(get_slowdns_ns)
+    s_sd = await asyncio.to_thread(_svc_icon, "slowdns")
+    s_uc = await asyncio.to_thread(_svc_icon, "udp-custom")
+    s_ug = await asyncio.to_thread(_svc_icon, "udpgw")
+    n_sd = await asyncio.to_thread(_pid_count, "vaydns-server")
+    n_ug = await asyncio.to_thread(_pid_count, "udpgw")
+    text = (
+        "<b>MANAJEMEN SlowDNS &amp; UDP-Custom</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>SlowDNS (VayDNS multi-record)</b> : {s_sd} ({n_sd} proc)\n"
+        f"• <b>UDP-Custom</b>       : {s_uc}\n"
+        f"• <b>UDPGW (badvpn)</b>   : {s_ug} ({n_ug} proc)\n"
+        f"• <b>NS</b>              : <code>{html.escape(ns)}</code>\n"
+        "• <b>SlowDNS Port</b>    : <code>53, 5300</code>\n"
+        "• <b>UDP-Custom</b>      : <code>1-65535</code>\n"
+        "• <b>UDPGW Port</b>      : <code>7300</code>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>PUBLIC KEY</b>:\n<code>{html.escape(pub)}</code>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📦 Pasang / Perbaiki Stack UDP", callback_data="sd_act:install")],
+        [InlineKeyboardButton(text="🔑 Generate Public Key Baru", callback_data="sd_act:regen")],
+        [InlineKeyboardButton(text="🌐 Regenerate Unit NS (Domain Baru)", callback_data="sd_act:regen_ns")],
+        [InlineKeyboardButton(text="🔁 Restart SlowDNS", callback_data="sd_act:restart_slowdns")],
+        [InlineKeyboardButton(text="🔁 Restart UDP-Custom", callback_data="sd_act:restart_udp-custom")],
+        [InlineKeyboardButton(text="🔁 Restart UDPGW (badvpn)", callback_data="sd_act:restart_udpgw")],
+        [InlineKeyboardButton(text="🧹 Reset iptables &amp; Restart Semua", callback_data="sd_act:restart_all")],
+        [InlineKeyboardButton(text="🔐 Salin Public Key", callback_data="sd_act:copy_pub")],
+        [InlineKeyboardButton(text="⬅️ Kembali ke Panel Admin", callback_data="admin_panel")],
+    ])
+    await _safe_edit(call, text, reply_markup=kb)
+
+@router.callback_query(F.data == "adm_slowdns_udp")
+async def cb_adm_slowdns_udp(call: CallbackQuery):
+    if not await _guard_admin(call):
+        return
+    await _render_slowdns_panel(call)
+    await call.answer()
+
+@router.callback_query(F.data.startswith("sd_act:"))
+async def cb_sd_act(call: CallbackQuery):
+    if not await _guard_admin(call):
+        return
+    act = call.data.split(":", 1)[1]
+    if act == "copy_pub":
+        pub = await asyncio.to_thread(get_slowdns_pubkey)
+        await call.answer(f"PUBLIC KEY: {pub}" if pub != "-" else "Public key belum ada.", show_alert=True)
+        return
+    await call.answer("⏳ Memproses...")
+    if act == "install":
+        res = await asyncio.to_thread(install_udp_stack)
+        await call.bot.send_message(call.message.chat.id, f"📦 <b>Hasil pasang stack UDP</b>\n<pre>{html.escape(res)}</pre>")
+    elif act == "regen":
+        ok, res = await asyncio.to_thread(regen_slowdns_key)
+        await call.bot.send_message(
+            call.message.chat.id,
+            f"🔑 <b>Public key baru</b>:\n<code>{html.escape(res)}</code>" if ok else f"❌ {html.escape(res)}"
+        )
+    elif act == "regen_ns":
+        ok, res = await asyncio.to_thread(regen_slowdns_ns)
+        await call.bot.send_message(
+            call.message.chat.id,
+            f"🌐 Unit slowdns di-regenerate untuk <code>{html.escape(res)}</code> & di-restart." if ok else f"❌ {html.escape(res)}"
+        )
+    elif act == "restart_slowdns":
+        await call.bot.send_message(call.message.chat.id, html.escape(await asyncio.to_thread(restart_udp_services, "slowdns")))
+    elif act == "restart_udp-custom":
+        await call.bot.send_message(call.message.chat.id, html.escape(await asyncio.to_thread(restart_udp_services, "udp-custom")))
+    elif act == "restart_udpgw":
+        await call.bot.send_message(call.message.chat.id, html.escape(await asyncio.to_thread(restart_udp_services, "udpgw")))
+    else:
+        await call.bot.send_message(call.message.chat.id, html.escape(await asyncio.to_thread(restart_udp_services, "all")))
+    await _render_slowdns_panel(call)

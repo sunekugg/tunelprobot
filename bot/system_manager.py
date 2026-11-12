@@ -537,6 +537,232 @@ def check_service_status(srv: str) -> str:
     except Exception:
         return "🔴 Mati"
 
+# === SLOWDNS (VayDNS) + UDP-CUSTOM + UDPGW (badvpn) ===
+SLOWDNS_DIR = "/etc/slowdns"
+SLOWDNS_PUB = "/etc/slowdns/server.pub"
+SLOWDNS_KEY = "/etc/slowdns/server.key"
+SLOWDNS_PORT = 5300
+UDPC_PORT = 36712
+UDPGW_PORT = 7300
+
+def _sh(cmd: str, timeout: int = 120) -> tuple[int, str]:
+    try:
+        r = subprocess.run(["bash", "-c", cmd], stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, text=True, timeout=timeout)
+        return r.returncode, (r.stdout or "").strip()
+    except Exception as e:
+        return 1, str(e)
+
+def get_slowdns_pubkey() -> str:
+    try:
+        with open(SLOWDNS_PUB, encoding="utf-8") as f:
+            return f.read().strip() or "-"
+    except Exception:
+        return "-"
+
+def get_slowdns_ns() -> str:
+    d = (DOMAIN or "").strip()
+    if not d:
+        return "-"
+    return d if d.startswith("ns-") else f"ns-{d}"
+
+def get_slowdns_ns_from_host(host: str) -> str:
+    h = (host or "").strip()
+    if not h:
+        return "-"
+    return h if h.startswith("ns-") else f"ns-{h}"
+
+def _slowdns_unit(domain: str) -> str:
+    return (
+        "[Unit]\nDescription=SlowDNS dnstt Server\nAfter=network.target\n\n"
+        "[Service]\n"
+        f"ExecStart=/usr/local/bin/vaydns-server -udp :{SLOWDNS_PORT} -privkey-file {SLOWDNS_KEY} "
+        f"-domain ns-{domain} -upstream 127.0.0.1:90 -record-type txt -dnstt-compat\n"
+        "Restart=on-failure\nRestartSec=3\n\n"
+        "[Install]\nWantedBy=multi-user.target\n"
+    )
+
+_UDP_CUSTOM_UNIT = (
+    "[Unit]\nDescription=UDP Custom (HTTP Custom)\nAfter=network.target\n\n"
+    "[Service]\nWorkingDirectory=/etc/udp\n"
+    f"ExecStart=/usr/local/bin/udp-custom server -exclude 53,{SLOWDNS_PORT}\n"
+    "Restart=on-failure\nRestartSec=3\n\n"
+    "[Install]\nWantedBy=multi-user.target\n"
+)
+
+_UDPGW_UNIT = (
+    "[Unit]\nDescription=BadVPN UDP Gateway (udpgw)\nAfter=network.target\n\n"
+    "[Service]\nType=simple\n"
+    f"ExecStart=/usr/local/bin/udpgw --listen-addr 0.0.0.0:{UDPGW_PORT} "
+    "--max-clients 200 --max-connections-for-client 6 --udp-mtu 65507\n"
+    "Restart=on-failure\nRestartSec=3\n\n"
+    "[Install]\nWantedBy=multi-user.target\n"
+)
+
+_UDP_CUSTOM_CONF = (
+    "{\n"
+    f'  "listen": ":{UDPC_PORT}",\n'
+    '  "stream_buffer": 33554432,\n'
+    '  "receive_buffer": 83886080,\n'
+    '  "auth": { "mode": "passwords" }\n'
+    "}\n"
+)
+
+def _iptables_script() -> str:
+    """Rule NAT/INPUT idempotent. 7300 di-ACCEPT SEBELUM catch-all 1:65535,
+    kalau tidak paket UDPGW ikut ter-REDIRECT ke udp-custom dan badvpn mati."""
+    return (
+        "#!/bin/bash\n"
+        'IFACE=$(ip route get 8.8.8.8 2>/dev/null | awk \'{print $5; exit}\')\n'
+        '[ -z "$IFACE" ] && IFACE="eth0"\n'
+        "# hapus hanya rule milik kita, jangan flush PREROUTING (bisa buang rule lain)\n"
+        f"iptables -t nat -D PREROUTING -i \"$IFACE\" -p udp --dport {SLOWDNS_PORT} -j ACCEPT 2>/dev/null\n"
+        f"iptables -t nat -D PREROUTING -i \"$IFACE\" -p udp --dport 53 -j REDIRECT --to-ports {SLOWDNS_PORT} 2>/dev/null\n"
+        f"iptables -t nat -D PREROUTING -i \"$IFACE\" -p udp --dport {UDPGW_PORT} -j ACCEPT 2>/dev/null\n"
+        f"iptables -t nat -D PREROUTING -i \"$IFACE\" -p udp --dport 1:65535 -j REDIRECT --to-ports {UDPC_PORT} 2>/dev/null\n"
+        "# urutan WAJIB: pengecualian dulu, catch-all terakhir\n"
+        f"iptables -t nat -A PREROUTING -i \"$IFACE\" -p udp --dport {SLOWDNS_PORT} -j ACCEPT\n"
+        f"iptables -t nat -A PREROUTING -i \"$IFACE\" -p udp --dport 53 -j REDIRECT --to-ports {SLOWDNS_PORT}\n"
+        f"iptables -t nat -A PREROUTING -i \"$IFACE\" -p udp --dport {UDPGW_PORT} -j ACCEPT\n"
+        f"iptables -t nat -A PREROUTING -i \"$IFACE\" -p udp --dport 1:65535 -j REDIRECT --to-ports {UDPC_PORT}\n"
+        f"for P in 53 {SLOWDNS_PORT} {UDPC_PORT} {UDPGW_PORT}; do\n"
+        "  iptables -C INPUT -p udp --dport $P -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p udp --dport $P -j ACCEPT\n"
+        "done\n"
+        "mkdir -p /etc/iptables\n"
+        "iptables-save > /etc/iptables/rules.v4 2>/dev/null || true\n"
+    )
+
+def _write(path: str, content: str, mode: int = 0o644):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    os.chmod(path, mode)
+
+def _fetch_bin(name: str, urls: list[str], timeout: int = 120) -> bool:
+    """Unduh binary ke /usr/local/bin/<name>; sukses bila ELF valid."""
+    dst = f"/usr/local/bin/{name}"
+    if os.path.exists(dst):
+        try:
+            with open(dst, "rb") as f:
+                if f.read(4) == b"\x7fELF":
+                    return True
+        except Exception:
+            pass
+        os.remove(dst)
+    for u in urls:
+        rc, _ = _sh(f"wget -qO {shlex.quote(dst)} {shlex.quote(u)}", timeout=timeout)
+        if os.path.exists(dst):
+            try:
+                with open(dst, "rb") as f:
+                    if f.read(4) == b"\x7fELF":
+                        os.chmod(dst, 0o755)
+                        return True
+            except Exception:
+                pass
+            os.remove(dst)
+    return False
+
+def _arch() -> str:
+    m = (os.uname().machine or "").lower()
+    return "arm64" if m in ("aarch64", "arm64") else "amd64"
+
+def install_udp_stack() -> str:
+    """Pasang vaydns-server + udpgw + udp-custom, unit systemd, iptables.
+    Idempotent: file/unit ditulis ulang, service di-enable."""
+    lines = []
+    _sh(f"mkdir -p {SLOWDNS_DIR} /etc/udp /etc/iptables")
+    arch = _arch()
+    ok_v = _fetch_bin("vaydns-server", [
+        f"https://raw.githubusercontent.com/sunekugg/tunelv2/main/bin/vaydns-server-linux-{arch}",
+        f"https://github.com/net2share/vaydns/releases/download/v0.2.8/vaydns-server-linux-{arch}",
+    ])
+    lines.append(f"vaydns-server: {'OK' if ok_v else 'GAGAL unduh'}")
+    ok_g = _fetch_bin("udpgw", [
+        f"https://raw.githubusercontent.com/sunekugg/tunelv2/main/bin/udpgw-linux-{arch}",
+        "https://raw.githubusercontent.com/Midas-XYZ/tunnel/main/udpgw",
+    ])
+    lines.append(f"udpgw: {'OK' if ok_g else 'GAGAL unduh'}")
+    if arch == "arm64":
+        uc_urls = ["https://raw.githubusercontent.com/fisabiliyusri/Mantap/main/udp-custom/udp-custom-linux-arm"]
+    else:
+        uc_urls = [
+            "https://raw.githubusercontent.com/http-custom/udp-custom/main/bin/udp-custom-linux-amd64",
+            "https://ghfast.top/https://raw.githubusercontent.com/http-custom/udp-custom/main/bin/udp-custom-linux-amd64",
+        ]
+    ok_uc = _fetch_bin("udp-custom", uc_urls)
+    lines.append(f"udp-custom: {'OK' if ok_uc else 'GAGAL unduh'}")
+
+    if ok_v:
+        _sh("ln -sf /usr/local/bin/vaydns-server /usr/local/bin/dnstt-server")
+
+    # key SlowDNS hanya dibuat sekali — regenerate lewat tombol panel
+    if ok_v and not os.path.exists(SLOWDNS_PUB):
+        _sh(f"/usr/local/bin/vaydns-server -gen-key -privkey-file {SLOWDNS_KEY} "
+            f"-pubkey-file {SLOWDNS_PUB}")
+        if os.path.exists(SLOWDNS_KEY):
+            os.chmod(SLOWDNS_KEY, 0o600)
+        lines.append(f"public key: {'dibuat' if os.path.exists(SLOWDNS_PUB) else 'gagal'}")
+
+    _write("/etc/udp/config.json", _UDP_CUSTOM_CONF)
+    _write("/etc/systemd/system/slowdns.service", _slowdns_unit(DOMAIN))
+    _write("/etc/systemd/system/udp-custom.service", _UDP_CUSTOM_UNIT)
+    _write("/etc/systemd/system/udpgw.service", _UDPGW_UNIT)
+    _write("/etc/iptables/apply-slowdns-udp.sh", _iptables_script(), 0o755)
+    _write("/etc/systemd/system/iptables-restore.service",
+           "[Unit]\nDescription=Restore iptables NAT rules\nAfter=network.target\n\n"
+           "[Service]\nType=oneshot\nExecStart=/etc/iptables/apply-slowdns-udp.sh\n\n"
+           "[Install]\nWantedBy=multi-user.target\n")
+
+    # :53 harus bebas dari systemd-resolved
+    _sh("systemctl stop systemd-resolved 2>/dev/null; systemctl disable systemd-resolved 2>/dev/null; "
+        "printf 'nameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf")
+
+    _sh("systemctl daemon-reload")
+    _sh("/etc/iptables/apply-slowdns-udp.sh")
+    svcs = []
+    if ok_v:
+        svcs.append("slowdns")
+    if ok_g:
+        svcs.append("udpgw")
+    if ok_uc:
+        svcs.append("udp-custom")
+    svcs.append("iptables-restore")
+    _sh("systemctl enable --now " + " ".join(svcs) + " 2>&1")
+    _sh("systemctl restart " + " ".join(svcs) + " 2>&1")
+    return " | ".join(lines)
+
+def restart_udp_services(which: str) -> str:
+    """which: slowdns | udp-custom | udpgw | all"""
+    if which == "all":
+        _sh("/etc/iptables/apply-slowdns-udp.sh")
+        rc, out = _sh("systemctl restart slowdns udp-custom udpgw iptables-restore 2>&1")
+        return "iptables + slowdns + udp-custom + udpgw di-restart." if rc == 0 else f"Gagal: {out[:200]}"
+    rc, out = _sh(f"systemctl restart {shlex.quote(which)} 2>&1")
+    return f"{which} di-restart." if rc == 0 else f"Gagal restart {which}: {out[:200]}"
+
+def regen_slowdns_key() -> tuple[bool, str]:
+    if not os.path.exists("/usr/local/bin/vaydns-server"):
+        return False, "vaydns-server belum terpasang — pakai tombol Pasang Stack UDP dulu."
+    for p in (SLOWDNS_KEY, SLOWDNS_PUB):
+        if os.path.exists(p):
+            os.remove(p)
+    _sh(f"/usr/local/bin/vaydns-server -gen-key -privkey-file {SLOWDNS_KEY} -pubkey-file {SLOWDNS_PUB}")
+    if os.path.exists(SLOWDNS_KEY):
+        os.chmod(SLOWDNS_KEY, 0o600)
+    if not os.path.exists(SLOWDNS_PUB):
+        return False, "Gagal generate public key baru."
+    _sh("systemctl restart slowdns 2>&1")
+    return True, get_slowdns_pubkey()
+
+def regen_slowdns_ns() -> tuple[bool, str]:
+    ns = get_slowdns_ns()
+    if ns == "-":
+        return False, "DOMAIN belum diset di config.env."
+    _write("/etc/systemd/system/slowdns.service", _slowdns_unit(ns[3:] if ns.startswith("ns-") else ns))
+    _sh("systemctl daemon-reload; systemctl restart slowdns 2>&1")
+    return True, ns
+
+
 async def _dynamic_restore_table(db, table_name: str, rows: list[dict], clear_first: bool = True) -> int:
     if clear_first:
         await db.execute(f"DELETE FROM {table_name}")

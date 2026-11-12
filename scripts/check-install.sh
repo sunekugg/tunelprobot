@@ -32,7 +32,7 @@ echo "  apt-mark showhold: $hold"
 case "$hold" in *dropbear*) pass "dropbear dikunci (hold)";; *) warn "dropbear TIDAK dikunci";; esac
 
 echo "== 3. Port penting (blueprint §4) =="
-for p in 22 80 443 81 90 444 53 5300 8080 8443 3128 9080 9088; do
+for p in 22 80 443 81 90 444 53 5300 7300 8080 8443 3128 9080 9088; do
   if ss -lntu 2>/dev/null | grep -oE ":[0-9]+" | grep -qE ":${p}\$"; then
     pass "port $p: TERBUKA"
   else

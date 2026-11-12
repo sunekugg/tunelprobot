@@ -334,6 +334,8 @@ cp -f "$REPO/scripts/xray_hot_sync.py" /usr/local/bin/xray-hot-sync.py 2>/dev/nu
 # sinkronkan akun xray dari DB (idempotent: 0 akun = config tetap 0)
 "$REPO/.venv/bin/python" -c "import asyncio,sys; sys.path.insert(0,'$REPO'); from bot.system_manager import sync_xray_clients; asyncio.run(sync_xray_clients())" >>"$LOG" 2>&1 || log "sinkron xray awal gagal (abaikan bila DB masih kosong)"
 
+# SlowDNS (VayDNS) + UDP-Custom + UDPGW :7300 — pakai kode bot, bukan duplikat bash
+
 # config.env (idempotent: jangan timpa jika sudah ada)
 if [ ! -f "$DATA/config.env" ]; then
   cat > "$DATA/config.env" <<ENV
@@ -351,6 +353,13 @@ TZ=Asia/Jakarta
 ENV
   chmod 600 "$DATA/config.env"
 fi
+
+# SlowDNS (VayDNS) + UDP-Custom + UDPGW :7300 — pasang SETELAH config.env
+# supaya DOMAIN (NS slowdns) & datanya benar. install_udp_stack() idempotent.
+log "=== [8b/9] Pasang stack UDP (SlowDNS 53/5300, UDP-Custom 1-65535, UDPGW 7300) ==="
+UDP_RES="$(set -a; . "$DATA/config.env"; set +a; "$REPO/.venv/bin/python" -c \
+  "import sys; sys.path.insert(0,'$REPO'); from bot.system_manager import install_udp_stack; print(install_udp_stack())" 2>&1)" \
+  && log "stack UDP: $UDP_RES" || log "PERINGATAN: pasang stack UDP gagal — $UDP_RES"
 
 # pastikan unit tunnel-bot.service menunjuk ke /opt/tunnel-bot & config.env
 if [ -f /etc/systemd/system/tunnel-bot.service ]; then
@@ -375,7 +384,7 @@ echo "✅ DEPLOY SELESAI — $DOMAIN"
 echo "=============================================================="
 echo ""
 echo "Status service:"
-for s in tunnel-bot ws-ssh xray haproxy nginx dropbear; do
+for s in tunnel-bot ws-ssh xray haproxy nginx dropbear slowdns udp-custom udpgw; do
   st="$(systemctl is-active "$s" 2>/dev/null || echo inactive)"
   if systemctl cat "$s" >/dev/null 2>&1; then
     printf "  %-14s %s\n" "$s" "$st"

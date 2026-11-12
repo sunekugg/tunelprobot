@@ -24,6 +24,7 @@ def admin_menu_kb(bot_enabled: bool = True) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔄 Reset Limit Buat Akun (Semua)", callback_data="adm_reset_all_limits"), InlineKeyboardButton(text="🧨 Hapus Semua Akun User", callback_data="adm_del_all_ask")],
         [InlineKeyboardButton(text="🎨 Pengaturan, Durasi, Kuota & Speed", callback_data="adm_settings"), InlineKeyboardButton(text="📌 Kelola Wajib Join", callback_data="adm_fjoin")],
         [InlineKeyboardButton(text="💾 Auto Backup & Restore (.sh)", callback_data="adm_backup"), InlineKeyboardButton(text="📊 Statistik, SSL & Service", callback_data="adm_stats")],
+        [InlineKeyboardButton(text="🌐 SlowDNS & UDP-Custom & UDPGW", callback_data="adm_slowdns_udp")],
         [InlineKeyboardButton(text="📢 Broadcast", callback_data="adm_broadcast"), InlineKeyboardButton(text="📜 Log Aktivitas", callback_data="adm_logs")],
         [InlineKeyboardButton(text="⬅️ Kembali ke Menu User", callback_data="menu_main")]
     ]

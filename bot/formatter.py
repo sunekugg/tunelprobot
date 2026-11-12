@@ -146,14 +146,26 @@ def format_trojan_output(remark: str, city: str, isp: str, domain: str, uuid_val
     ]
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
+def _slowdns_pubkey() -> str:
+    """Public key SlowDNS dari /etc/slowdns/server.pub (hanya key publik, 64 hex)."""
+    try:
+        with open("/etc/slowdns/server.pub", encoding="utf-8") as f:
+            v = f.read().strip()
+        return v or "-"
+    except Exception:
+        return "-"
+
 def format_ssh_output(domain: str, user: str, pwd: str, limit_ip: int, expired_display: str, show_pass: bool = True) -> tuple[str, InlineKeyboardMarkup]:
     d_esc, u_esc, e_esc = map(html.escape, (domain, user, expired_display))
     real_pwd = pwd if show_pass else "********"
     p_esc = html.escape(real_pwd)
     lim_str = "Unlimited" if int(limit_ip) == 0 else str(limit_ip)
+    ns_host = domain if domain.startswith("ns-") else f"ns-{domain}"
+    pub_key = _slowdns_pubkey()
 
     line_tls = f"{domain}:443@{user}:{real_pwd}"
     line_ntls = f"{domain}:80@{user}:{real_pwd}"
+    line_dns = f"{ns_host}:5300@{user}:{real_pwd}"
     ovpn_url = f"http://{domain}:81/myvpn-config.zip"
 
     block_info = (
@@ -165,13 +177,18 @@ def format_ssh_output(domain: str, user: str, pwd: str, limit_ip: int, expired_d
     block_ports = (
         "WS TLS          : 443,8443,2053,2083\nWS Non-TLS      : 80,8080,2052,2082,8880\n"
         "OpenSSH         : 22,444\nDropbear 2019   : 90,109\nSSL/TLS Direct  : 442,443\n"
-        "------------------------------------\nSlowDNS         : 53,5300\n"
-        "UDP-Custom      : 1-65535\nOHP + SSH       : 9080\nSquid Proxy     : 3128\n"
-        "UDPGW           : 7100-7600\nOpenVPN TCP     : 1194\nOpenVPN SSL     : 442"
+        "------------------------------------\n"
+        f"SlowDNS         : 53,5300\nNS SlowDNS      : {ns_host}\n"
+        f"PUBLIC KEY      : {pub_key}\n"
+        "UDP-Custom      : 1-65535\n"
+        "UDPGW (badvpn)  : 7300\n"
+        "OHP + SSH       : 9080\nSquid Proxy     : 3128\n"
+        "OpenVPN TCP     : 1194\nOpenVPN SSL     : 442"
     )
     text = (
-        f"<pre>{block_info}</pre>\n<pre>{block_ports}</pre>\n"
+        f"<pre>{block_info}</pre>\n<pre>{html.escape(block_ports)}</pre>\n"
         f"<pre>{html.escape(line_tls)}</pre>\n<pre>{html.escape(line_ntls)}</pre>\n"
+        f"<pre>{html.escape(line_dns)}</pre>\n"
         f"<pre>------------------------------------\n{html.escape(ovpn_url)}\n------------------------------------</pre>"
     )
     rows = []
@@ -179,6 +196,9 @@ def format_ssh_output(domain: str, user: str, pwd: str, limit_ip: int, expired_d
         rows.append([_make_copy_btn("📋 Salin Password", pwd)])
         rows.append([_make_copy_btn("📋 Salin Format TLS (443)", line_tls)])
         rows.append([_make_copy_btn("📋 Salin Format Non-TLS (80)", line_ntls)])
+        rows.append([_make_copy_btn("📋 Salin SlowDNS (5300)", line_dns)])
+    if pub_key != "-":
+        rows.append([_make_copy_btn("📋 Salin Public Key SlowDNS", pub_key)])
     rows.append([InlineKeyboardButton(text="⬅️ Kembali ke Menu", callback_data="menu_main")])
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
