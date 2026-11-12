@@ -713,9 +713,15 @@ def install_udp_stack() -> str:
            "[Service]\nType=oneshot\nExecStart=/etc/iptables/apply-slowdns-udp.sh\n\n"
            "[Install]\nWantedBy=multi-user.target\n")
 
-    # :53 harus bebas dari systemd-resolved
-    _sh("systemctl stop systemd-resolved 2>/dev/null; systemctl disable systemd-resolved 2>/dev/null; "
-        "printf 'nameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf")
+    # :53 hanya perlu dibebaskan bila ada yang memegangnya di alamat PUBLIK.
+    # systemd-resolved default cuma 127.0.0.53:53 (loopback) — tak bentrok dgn
+    # slowdns :5300 dan tak menghalangi REDIRECT 53->5300 dari IFACE eksternal.
+    # Mematikannya tanpa alasan = risiko DNS VPS mati.
+    rc53, pub53 = _sh("ss -ulnp 2>/dev/null | awk '$5 ~ /:53$/ && $5 !~ /^127\\.0\\.0\\.53/ {print $5}'")
+    if pub53.strip():
+        _sh("systemctl stop systemd-resolved 2>/dev/null; systemctl disable systemd-resolved 2>/dev/null; "
+            "printf 'nameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf")
+        lines.append("systemd-resolved dimatikan (:53 publik dipakai)")
 
     _sh("systemctl daemon-reload")
     _sh("/etc/iptables/apply-slowdns-udp.sh")
