@@ -33,7 +33,7 @@ def _append_slowdns_message(proto: str, remark: str, domain: str, secret: str,
     link = slowdns_link(proto, ns_host, domain, secret, remark)
     msg_text = (
         f"<pre>{html.escape(slowdns_block(proto, domain))}</pre>\n"
-        f"<pre>{SEP}\n   {proto.upper()} SlowDNS (NTLS via DNS)\n{SEP}</pre>\n"
+        f"<pre>   {proto.upper()} SlowDNS (NTLS via DNS)</pre>\n"
         f"<pre>{html.escape(link)}</pre>"
     )
     rows = [[_make_copy_btn("📋 Salin Link SlowDNS (NTLS)", link)]]
@@ -168,7 +168,7 @@ def format_trojan_output(remark: str, city: str, isp: str, domain: str, uuid_val
         f"<pre>{SEP}\n             TROJAN GRPC\n{SEP}</pre>\n<pre>{html.escape(grpc_link)}</pre>\n"
         f"<pre>{SEP}\n         TROJAN Upgrade TLS\n{SEP}</pre>\n<pre>{html.escape(upg_link)}</pre>\n"
         f"<pre>{html.escape(sd_block)}</pre>\n"
-        f"<pre>{SEP}\n   {proto.upper()} SlowDNS (NTLS via DNS)\n{SEP}</pre>\n<pre>{html.escape(sd_link)}</pre>"
+        f"<pre>   {proto.upper()} SlowDNS (NTLS via DNS)</pre>\n<pre>{html.escape(sd_link)}</pre>"
     )
     rows = [
         [_make_copy_btn("📋 Salin Key / UUID", uuid_val)],

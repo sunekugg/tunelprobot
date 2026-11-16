@@ -8,7 +8,9 @@ import base64 as _b64
 import json as _json
 import html as _html
 
-SEP = "-" * 36
+# Samakan dengan SEP di formatter.py (em-dash) agar garis pemisah output rata,
+# bukan campuran '————' dan '----' yang bikin tampilan acak.
+SEP = "————————————————————————————————————"
 
 
 def slowdns_pubkey() -> str:
@@ -53,6 +55,5 @@ def slowdns_block(proto: str, domain: str) -> str:
         f"NS Domain      : {_html.escape(ns_host)}\n"
         f"PUBLIC KEY     : {_html.escape(pub)}\n"
         f"DNS Port       : 53 / 5300 (UDP)\n"
-        f"Mode           : WebSocket Non-TLS (NTLS)\n"
-        f"Path WS        : /{(proto or 'trojan').lower()}\n{SEP}"
+        f"Mode           : WebSocket Non-TLS (NTLS)"
     )
