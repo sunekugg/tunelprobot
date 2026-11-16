@@ -51,16 +51,17 @@ WantedBy=multi-user.target
 
     # 3. Regenerate slowdns.service via bot (satu sumber kode)
     regen = (
-        "import os; "
-        "from bot import system_manager as sm; "
-        "dom=sm.DOMAIN; "
+        "from bot import system_manager as sm\n"
+        "dom = sm.DOMAIN\n"
         "if not dom:\n"
         "    for line in open('/etc/tunnel-bot/config.env'):\n"
-        "        if line.startswith('DOMAIN='): dom=line.split('=',1)[1].strip()\n"
-        "sm._write('/etc/systemd/system/slowdns.service', sm._slowdns_unit(dom)); "
-        "print('domain:', dom)"
+        "        if line.startswith('DOMAIN='):\n"
+        "            dom = line.split('=', 1)[1].strip()\n"
+        "sm._write('/etc/systemd/system/slowdns.service', sm._slowdns_unit(dom))\n"
+        "print('slowdns ns-domain:', dom)\n"
     )
-    rc, out = sh(f"cd /opt/tunnel-bot && /opt/tunnel-bot/.venv/bin/python -c {shlex.quote(regen)}")
+    sh(f"cat > /tmp/_regen_sd.py <<'PYEOF'\n{regen}\nPYEOF")
+    rc, _ = sh("cd /opt/tunnel-bot && /opt/tunnel-bot/.venv/bin/python /tmp/_regen_sd.py")
     if rc != 0:
         print("FATAL: gagal regenerate slowdns.service", file=sys.stderr)
         sys.exit(1)
