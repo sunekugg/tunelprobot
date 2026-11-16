@@ -125,14 +125,15 @@ async def _pipe(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
             pass
 
 
-async def _bridge(cw: asyncio.StreamWriter, tr: asyncio.StreamReader,
-                  tw: asyncio.StreamWriter, first: bytes) -> None:
-    """Kirim byte awal (kecuali kalau kita sudah membalas sendiri) lalu pipe dua arah."""
-    tw.write(first)
-    await tw.drain()
-    cr = cw.get_extra_info("peername")
-    del cr
-    await asyncio.gather(_pipe(tr, cw), _pipe(cw, tw), return_exceptions=True)
+async def _bridge(cr: asyncio.StreamReader, cw: asyncio.StreamWriter,
+                  tr: asyncio.StreamReader, tw: asyncio.StreamWriter,
+                  first: bytes) -> None:
+    """Kirim byte awal (kecuali kalau kita sudah membalas sendiri) lalu pipe dua arah:
+    cr->tw (klien ke backend) dan tr->cw (backend ke klien)."""
+    if first:
+        tw.write(first)
+        await tw.drain()
+    await asyncio.gather(_pipe(tr, cw), _pipe(cr, tw), return_exceptions=True)
     for w in (cw, tw):
         try:
             w.close()
@@ -201,7 +202,8 @@ async def handle(client_reader: asyncio.StreamReader,
         return
 
     # Byte awal diteruskan kecuali yang sudah dikonsumsi utk balasan 101.
-    await _bridge(client_writer, tr, tw, bytes(buf) if not replied else b"")
+    await _bridge(client_reader, client_writer, tr, tw,
+                  bytes(buf) if not replied else b"")
 
 
 async def main() -> None:
