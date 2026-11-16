@@ -1,24 +1,55 @@
-# Tunnel-bot — Status & Akar Masalah yang Diperbaiki
+# tunnel-bot — Status
 
-Terakhir diperbarui: 2026-11-08
+Terakhir diperbarui: 2026-11-17
 
-## Fase selesai
-- **Fondasi** (F1): repo `tunnel-bot`, struktur folder, config, DB, VERSION.
-- **Adopsi penuh bot lama (aiogram 3)**: 17 modul (~12.5k baris) dipindah dari installer `install-full-vpn.sh` ke `bot/`. Semua modul import bersih.
-- **Deployment VPS uji** (103.92.214.240): xray, nginx, haproxy, dropbear, ws-ssh aktif; tunnel-bot service berjalan.
-- **Ganti domain** per-server dari panel admin (FSM edit_domain, tombol 🌐 di daftar server).
-- **Prefix `sunek-` otomatis** di semua buat/trial akun SSH & Xray.
+## Status: produksi
 
-## Akar masalah yang diperbaiki
-1. **Skema DB bercampur** — DB lama (skema PTB) punya `protocol NOT NULL`; bot baru pakai kolom baru (`acc_type`, dll). Fix: reset DB ke skema persis install-full-vpn.sh + guard migrasi.
-2. **Sandbox systemd memblokir useradd** — `ProtectSystem=full` membuat /etc read-only di dalam service → `useradd` gagal "cannot lock /etc/passwd" → buat akun SSH selalu error. Fix: hapus `ProtectSystem=full` dari `tunnel-bot.service` (bot manajer VPN butuh akses root penuh ke /etc).
-3. **Bot lama (tgbot-vpn) hidup lagi** — konflik polling Telegram. Fix: unit file dipindah ke `.disabled` + proses dimatikan.
-4. **Domain lokal ditimpa config.env tiap restart** — fix: hapus `UPDATE servers SET domain=... WHERE is_local=1`.
+Bot jalan di VPS produksi (tunnel-bot, xray, dropbear, nginx, haproxy, ws-ssh,
+slowdns, udp-custom, udpgw, zivpn — semua aktif).
+
+## Terakhir dikerjakan
+
+- **ZiVPN (UDP) end-to-end** (`92275e8`→`d829a3d`): binary amd64/arm64, cert
+  self-signed, config auth password, unit systemd, pasang otomatis via
+  `install_udp_stack()`, menu Buat/Trial ZiVPN, Pindah Server, Ganti Password,
+  panel admin, auto-expired.
+- **Pembersihan repo**: hapus 9 file migrasi one-off (`patch_*.py`, `test_xff.py`),
+  duplikat `ws-ssh.py` root, dan 3 test basi (`test_fase1/34/5`) yang mengimpor
+  modul yang sudah tak ada. README & STATUS ditulis ulang.
+
+## Akar masalah yang diperbaiki (ZiVPN)
+
+1. **Rule NAT ZiVPN kalah urutan** — ada VPS dengan rule DNAT usang di atas
+   rule baru (`5301:65535 → 36712`, `1:52 → 36712`) sehingga traffic udp
+   6000–19999 tersedot ke udp-custom. Fix: ZiVPN di-`-I PREROUTING 1`
+   (insert posisi teratas, idempoten), bukan `-A`.
+2. **`create:zivpn:0` tak pernah cocok** — `cb_picked_server` membandingkan
+   `act == "create:zivpn_0"`, padahal `act` sudah di-replace `:`→`_`. Fix:
+   cocokkan `create_zivpn_0/1`. (Bug ini membuat Buat/Trial ZiVPN mati total.)
+3. **Backslash dalam f-string** — Python 3.10 (Ubuntu 22.04) menolak `\` di
+   dalam `{}` f-string → SyntaxError saat bot start. Fix: pindahkan logika
+   keluar dari f-string.
+4. **`cb_my_accounts() missing 'state'`** — pemanggilan lama tak meneruskan
+   `state` → TypeError saat hapus akun. Fix: teruskan `state`.
+
+## Catatan desain ZiVPN
+
+- Kredensial = password plaintext (`acc_type='zivpn'`, `username =
+  password_or_uuid = password`).
+- Regex ZiVPN hanya menerima alfanumerik → prefix di-join **tanpa** `-`
+  (tanda `-` di-strip).
+- Remote multi-VPS memakai python3-inline yang mengedit `/etc/zivpn/config.json`
+  `auth.config` langsung, tanpa bergantung pada repo di node tujuan. Array
+  password tak pernah dikosongkan (sisakan minimal `zivpn`).
 
 ## File kunci
-- `bot/` (config.py, db.py, system_manager.py, handlers_user.py, handlers_admin.py, dsb)
-- `tunnel-bot.service` (tanpa ProtectSystem=full)
-- `install.sh`, `requirements.txt`
+
+- `bot/system_manager.py` (engine ZiVPN + stack UDP + remote multi-VPS)
+- `bot/handlers_user.py` (alur Buat/Trial/Kelola ZiVPN)
+- `bot/formatter.py` (`format_zivpn_output`)
+- `bot/scheduler.py`, `bot/expiry_cleaner.py` (daur ulang akun)
+- `install-full-vpn.sh` (installer penuh)
 
 ## Branch aktif
+
 `dev` (origin: https://github.com/sunekugg/tunelprobot)
