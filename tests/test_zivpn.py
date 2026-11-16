@@ -57,11 +57,11 @@ assert not _run("add", "sunek-trial"), "password dgn '-' harus ditolak"
 
 # --- 4. iptables: ZiVPN SEBELUM catch-all udp-custom ---
 ip = sm._iptables_script()
-i_z = ip.index('-A PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j REDIRECT --to-ports 5667')
+i_z = ip.index('-I PREROUTING 1 -i "$IFACE" -p udp --dport 6000:19999 -j REDIRECT --to-ports 5667')
 i_all = ip.index('-A PREROUTING -i "$IFACE" -p udp --dport 1:65535 -j REDIRECT')
 i_gw = ip.index('-A PREROUTING -i "$IFACE" -p udp --dport 7300 -j ACCEPT')
-assert i_z < i_all, "ZiVPN 6000:19999 HARUS sebelum catch-all 1:65535"
-assert i_z > i_gw, "ZiVPN di-append setelah pengecualian udp-custom"
+assert i_z < i_all, "ZiVPN 6000:19999 HARUS di atas catch-all 1:65535 (-I 1)"
+assert "-A PREROUTING" not in ip[:i_z], "ZiVPN di-INSERT di posisi teratas"
 assert '"$IFACE"' in ip and '\\"' not in ip, "escaping shell script rusak"
 assert "-F PREROUTING" not in ip, "jangan flush PREROUTING"
 for p in ("5667", "6000:19999"):

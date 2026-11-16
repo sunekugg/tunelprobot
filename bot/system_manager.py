@@ -700,13 +700,14 @@ def _iptables_script() -> str:
         f'iptables -t nat -D PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT} 2>/dev/null\n'
         f'iptables -t nat -D PREROUTING -i "$IFACE" -p udp --dport 1:65535 -j REDIRECT --to-ports {UDPC_PORT} 2>/dev/null\n'
         "# urutan WAJIB: pengecualian dulu, catch-all terakhir.\n"
-        "# ZiVPN (6000:19999 -> 5667) HARUS sebelum catch-all 1:65535 -> udp-custom,\n"
-        "# kalau tidak semua paket udp 6000-19999 tersedot ke udp-custom dan ZiVPN mati.\n"
+        "# ZiVPN (6000:19999 -> 5667) HARUS di atas catch-all. Beberapa VPS punya rule\n"
+        "# DNAT usang (mis. 5301:65535 -> 36712) yang berada di atas rule baru, sehingga\n"
+        "# -A biasa kalah. Karena itu ZiVPN di-INSERT di posisi TERATAS (-I 1), idempoten.\n"
+        f'iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport {ZIVPN_LISTEN_PORT} -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT} 2>/dev/null || iptables -t nat -I PREROUTING 1 -i "$IFACE" -p udp --dport {ZIVPN_LISTEN_PORT} -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT}\n'
+        f'iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT} 2>/dev/null || iptables -t nat -I PREROUTING 1 -i "$IFACE" -p udp --dport 6000:19999 -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT}\n'
         f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport {SLOWDNS_PORT} -j ACCEPT\n'
         f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 53 -j REDIRECT --to-ports {SLOWDNS_PORT}\n'
         f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport {UDPGW_PORT} -j ACCEPT\n'
-        f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport {ZIVPN_LISTEN_PORT} -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT}\n'
-        f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT}\n'
         f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 1:65535 -j REDIRECT --to-ports {UDPC_PORT}\n'
         f"for P in 53 {SLOWDNS_PORT} {UDPC_PORT} {UDPGW_PORT} {ZIVPN_LISTEN_PORT} 6000:19999; do\n"
         "  iptables -C INPUT -p udp --dport $P -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p udp --dport $P -j ACCEPT\n"

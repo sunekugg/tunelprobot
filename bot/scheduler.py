@@ -20,6 +20,7 @@ from .db import (
 from .system_manager import (
     refresh_all_servers_live_stats,
     lock_ssh_on_server, delete_ssh_on_server, sync_xray_by_server,
+    remove_zivpn_on_server,
     generate_portable_backup_sh, format_bytes_human, run_auto_heal_and_monitor
 )
 
@@ -137,6 +138,9 @@ async def scheduler_loop(bot: Bot):
                         expired_ids.append(aid)
                         if atype == "ssh":
                             await delete_ssh_on_server(sid, uname)
+                        elif atype == "zivpn":
+                            # Password ZiVPN = kredensial plaintext (secret), bukan uname.
+                            await remove_zivpn_on_server(sid, secret)
                         else:
                             affected_xray_srvs.add(sid)
                         try:
@@ -167,6 +171,8 @@ async def scheduler_loop(bot: Bot):
                     if atype == "ssh":
                         await lock_ssh_on_server(sid, uname, lock=True)
                     else:
+                        # Non-SSH (termasuk zivpn): cukup flag is_locked di DB,
+                        # konsisten dgn Xray — tidak mencabut kredensial.
                         affected_xray_srvs.add(sid)
                     backup_needed = True
                     try:
