@@ -1,0 +1,15 @@
+[Unit]
+Description=SlowDNS Multi-Protokol Multiplexer (SSH + Xray WS)
+After=network.target
+Before=slowdns.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/slowdns_mux.py
+Restart=on-failure
+RestartSec=3
+# Mux melayani seluruh jalur SlowDNS; tanpa ini slowdns melayani protokol apa pun.
+# Jangan tambah ProtectSystem (butuh jaringan loopback penuh).
+
+[Install]
+WantedBy=multi-user.target

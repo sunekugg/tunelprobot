@@ -12,13 +12,19 @@ os.environ.setdefault("ADMIN_ID", "1")
 
 from bot import system_manager as sm  # noqa: E402
 
-# --- 1. unit slowdns: -dnstt-compat, upstream SSH, port 5300, domain ns- ---
+# --- 1. unit slowdns: -dnstt-compat, upstream = mux Multi-Protokol, :5300, ns- ---
 u = sm._slowdns_unit("contoh.com")
 assert ":5300" in u, u
-assert "-upstream 127.0.0.1:90" in u, u
+assert "-upstream 127.0.0.1:10017" in u, u
+assert "-mtu 1232" in u, u
 assert "-dnstt-compat" in u, u
 assert "-domain ns-contoh.com" in u, u
 assert "-record-type txt" in u, u
+# mux Multi-Protokol wajib ada & slowdns bergantung padanya
+mu = sm._slowdns_mux_unit()
+assert "slowdns_mux.py" in mu, mu
+assert "ExecStart=/usr/bin/python3 /usr/local/bin/slowdns_mux.py" in mu, mu
+assert "vpn-slowdns-mux.service" in u and "After=vpn-slowdns-mux.service" in u, u
 
 # --- 2. udpgw :7300 publik (bukan loopback) ---
 g = sm._UDPGW_UNIT

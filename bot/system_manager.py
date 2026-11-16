@@ -572,12 +572,34 @@ def get_slowdns_ns_from_host(host: str) -> str:
         return "-"
     return h if h.startswith("ns-") else f"ns-{h}"
 
-def _slowdns_unit(domain: str) -> str:
+SLOWDNS_MUX = "/usr/local/bin/slowdns_mux.py"
+SLOWDNS_MUX_PORT = 10017
+
+def _slowdns_mux_unit() -> str:
+    """Unit mux Multi-Protokol. slowdns.service bergantung padanya (After+Wants)."""
     return (
-        "[Unit]\nDescription=SlowDNS dnstt Server\nAfter=network.target\n\n"
+        "[Unit]\n"
+        "Description=SlowDNS Multi-Protokol Multiplexer (SSH + Xray WS)\n"
+        "After=network.target\n"
+        "Before=slowdns.service\n\n"
+        "[Service]\n"
+        "Type=simple\n"
+        f"ExecStart=/usr/bin/python3 {SLOWDNS_MUX}\n"
+        "Restart=on-failure\nRestartSec=3\n\n"
+        "[Install]\nWantedBy=multi-user.target\n"
+    )
+
+def _slowdns_unit(domain: str) -> str:
+    """slowdns meneruskan stream TCP dekripsi DNS ke mux 127.0.0.1:10017,
+    BUKAN langsung ke Dropbear :90. Mux memutuskan tujuan: SSH / VMess / VLESS /
+    Trojan (WS). -mtu 1232 ditulis eksplisit agar tak berubah antar rilis."""
+    return (
+        "[Unit]\nDescription=SlowDNS dnstt Server (Multi-Protokol via mux)\n"
+        f"After=vpn-slowdns-mux.service\nWants=vpn-slowdns-mux.service\n\n"
         "[Service]\n"
         f"ExecStart=/usr/local/bin/vaydns-server -udp :{SLOWDNS_PORT} -privkey-file {SLOWDNS_KEY} "
-        f"-domain ns-{domain} -upstream 127.0.0.1:90 -record-type txt -dnstt-compat\n"
+        f"-mtu 1232 -domain ns-{domain} -upstream 127.0.0.1:{SLOWDNS_MUX_PORT} "
+        "-record-type txt -dnstt-compat\n"
         "Restart=on-failure\nRestartSec=3\n\n"
         "[Install]\nWantedBy=multi-user.target\n"
     )
@@ -666,6 +688,22 @@ def _arch() -> str:
     m = (os.uname().machine or "").lower()
     return "arm64" if m in ("aarch64", "arm64") else "amd64"
 
+def _install_slowdns_mux() -> bool:
+    """Sebar mux dari /opt/tunnel-bot/scripts/slowdns_mux.py ke /usr/local/bin.
+    Pola sama dgn binary lain yang di-refer bot lewat path absolut."""
+    src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "scripts", "slowdns_mux.py")
+    try:
+        with open(src, "rb") as f:
+            data = f.read()
+    except OSError:
+        return os.path.exists(SLOWDNS_MUX)
+    os.makedirs("/usr/local/bin", exist_ok=True)
+    with open(SLOWDNS_MUX, "wb") as f:
+        f.write(data)
+    os.chmod(SLOWDNS_MUX, 0o755)
+    return True
+
 def install_udp_stack() -> str:
     """Pasang vaydns-server + udpgw + udp-custom, unit systemd, iptables.
     Idempotent: file/unit ditulis ulang, service di-enable."""
@@ -704,6 +742,10 @@ def install_udp_stack() -> str:
         lines.append(f"public key: {'dibuat' if os.path.exists(SLOWDNS_PUB) else 'gagal'}")
 
     _write("/etc/udp/config.json", _UDP_CUSTOM_CONF)
+    # Mux Multi-Protokol: wajib terpasang sebelum slowdns dianggap siap.
+    ok_mux = _install_slowdns_mux()
+    lines.append(f"slowdns mux: {'OK' if ok_mux else 'GAGAL'}")
+    _write("/etc/systemd/system/vpn-slowdns-mux.service", _slowdns_mux_unit())
     _write("/etc/systemd/system/slowdns.service", _slowdns_unit(DOMAIN))
     _write("/etc/systemd/system/udp-custom.service", _UDP_CUSTOM_UNIT)
     _write("/etc/systemd/system/udpgw.service", _UDPGW_UNIT)
@@ -727,6 +769,10 @@ def install_udp_stack() -> str:
     _sh("systemctl daemon-reload")
     _sh("/etc/iptables/apply-slowdns-udp.sh")
     svcs = []
+    if ok_mux:
+        # mux duluan — slowdns.service After/Wants-nya, dan tanpa mux tak ada
+        # protokol yang tersambung dari jalur DNS.
+        svcs.append("vpn-slowdns-mux")
     if ok_v:
         svcs.append("slowdns")
     if ok_g:

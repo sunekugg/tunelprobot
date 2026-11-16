@@ -25,6 +25,24 @@ def _make_copy_btn(label: str, text_to_copy: str, fallback_cb: str = "copy_hint"
         return InlineKeyboardButton(text=label, copy_text=CopyTextButton(text=text_to_copy))
     return InlineKeyboardButton(text=label, callback_data=fallback_cb)
 
+def _append_slowdns_message(proto: str, remark: str, domain: str, secret: str,
+                            messages: list) -> None:
+    """Tambah satu pesan SlowDNS Multi-Protokol di akhir output Xray."""
+    from ._slowdns_fmt import slowdns_link, slowdns_block, slowdns_ns_host, slowdns_pubkey
+    ns_host = slowdns_ns_host(domain)
+    link = slowdns_link(proto, ns_host, domain, secret, remark)
+    msg_text = (
+        f"<pre>{html.escape(slowdns_block(proto, domain))}</pre>\n"
+        f"<pre>{SEP}\n   {proto.upper()} SlowDNS (NTLS via DNS)\n{SEP}</pre>\n"
+        f"<pre>{html.escape(link)}</pre>"
+    )
+    rows = [[_make_copy_btn("📋 Salin Link SlowDNS (NTLS)", link)]]
+    pub = slowdns_pubkey()
+    if pub != "-":
+        rows.append([_make_copy_btn("📋 Salin Public Key SlowDNS", pub)])
+    rows.append([InlineKeyboardButton(text="⬅️ Kembali ke Menu", callback_data="menu_main")])
+    messages.append((msg_text, InlineKeyboardMarkup(inline_keyboard=rows)))
+
 def build_vless_messages(remark: str, city: str, isp: str, domain: str, uuid_val: str, limit_ip: int, expired_display: str) -> list[tuple[str, InlineKeyboardMarkup]]:
     isp_short = html.escape(get_short_isp(isp))
     r_esc, c_esc, i_esc, d_esc, u_esc, e_esc = map(html.escape, (remark, city, isp, domain, uuid_val, expired_display))
@@ -56,6 +74,7 @@ def build_vless_messages(remark: str, city: str, isp: str, domain: str, uuid_val
         if idx == len(blocks) - 1:
             rows.append([InlineKeyboardButton(text="⬅️ Kembali ke Menu", callback_data="menu_main")])
         messages.append((msg_text, InlineKeyboardMarkup(inline_keyboard=rows)))
+    _append_slowdns_message("vless", remark, domain, uuid_val, messages)
     return messages
 
 def _encode_vmess_json(obj: dict) -> str:
@@ -102,6 +121,7 @@ def build_vmess_messages(remark: str, city: str, isp: str, domain: str, uuid_val
         if idx == len(blocks) - 1:
             rows.append([InlineKeyboardButton(text="⬅️ Kembali ke Menu", callback_data="menu_main")])
         messages.append((msg_text, InlineKeyboardMarkup(inline_keyboard=rows)))
+    _append_slowdns_message("vmess", remark, domain, uuid_val, messages)
     return messages
 
 async def send_multi_part_output(target_msg: Message, parts: list[tuple[str, InlineKeyboardMarkup]], replace_first: bool = False):
@@ -114,7 +134,8 @@ async def send_multi_part_output(target_msg: Message, parts: list[tuple[str, Inl
                 pass
         await target_msg.answer(txt, reply_markup=kb)
 
-def format_trojan_output(remark: str, city: str, isp: str, domain: str, uuid_val: str, limit_ip: int, expired_display: str) -> tuple[str, InlineKeyboardMarkup]:
+def format_trojan_output(remark: str, city: str, isp: str, domain: str, uuid_val: str, limit_ip: int, expired_display: str, proto: str = "trojan") -> tuple[str, InlineKeyboardMarkup]:
+    proto = (proto or "trojan").lower().strip()
     isp_short = html.escape(get_short_isp(isp))
     r_esc, c_esc, i_esc, d_esc, u_esc, e_esc = map(html.escape, (remark, city, isp, domain, uuid_val, expired_display))
     lim_str = "Unlimited" if int(limit_ip) == 0 else str(limit_ip)
@@ -122,6 +143,16 @@ def format_trojan_output(remark: str, city: str, isp: str, domain: str, uuid_val
     ws_link = f"trojan://{uuid_val}@{domain}:443?path=/trojan&security=tls&host={domain}&type=ws&sni={domain}#{remark}"
     grpc_link = f"trojan://{uuid_val}@{domain}:443?mode=gun&security=tls&type=grpc&serviceName=trojan&sni={domain}#{remark}"
     upg_link = f"trojan://{uuid_val}@{domain}:443?path=/uptrojan&security=tls&host={domain}&type=httpupgrade&sni={domain}#{remark}"
+
+    # Jalur SlowDNS (Multi-Protokol): WebSocket Non-TLS di atas tunnel DNS.
+    # Address = NS domain (client resolve -> IP server; jalur DNS tak bisa double-TLS,
+    # jadi security=none). 1 NS domain + 1 Public Key utk SSH & semua proto Xray.
+    from ._slowdns_fmt import slowdns_link, slowdns_block, slowdns_ns_host, slowdns_pubkey
+    ns_host = slowdns_ns_host(domain)
+    pub_key = slowdns_pubkey()
+    sd_path = f"/{proto}"
+    sd_link = slowdns_link(proto, ns_host, domain, uuid_val, remark)
+    sd_block = slowdns_block(proto, domain)
 
     block_info = (
         f"ID • {isp_short}:\n{SEP}\n               TROJAN\n{SEP}\n"
@@ -135,16 +166,20 @@ def format_trojan_output(remark: str, city: str, isp: str, domain: str, uuid_val
         f"<pre>{block_info}</pre>\n"
         f"<pre>{SEP}\n            TROJAN WS TLS\n{SEP}</pre>\n<pre>{html.escape(ws_link)}</pre>\n"
         f"<pre>{SEP}\n             TROJAN GRPC\n{SEP}</pre>\n<pre>{html.escape(grpc_link)}</pre>\n"
-        f"<pre>{SEP}\n         TROJAN Upgrade TLS\n{SEP}</pre>\n<pre>{html.escape(upg_link)}</pre>"
+        f"<pre>{SEP}\n         TROJAN Upgrade TLS\n{SEP}</pre>\n<pre>{html.escape(upg_link)}</pre>\n"
+        f"<pre>{html.escape(sd_block)}</pre>\n"
+        f"<pre>{SEP}\n   {proto.upper()} SlowDNS (NTLS via DNS)\n{SEP}</pre>\n<pre>{html.escape(sd_link)}</pre>"
     )
     rows = [
         [_make_copy_btn("📋 Salin Key / UUID", uuid_val)],
         [_make_copy_btn("📋 Salin Link WS TLS", ws_link)],
         [_make_copy_btn("📋 Salin Link gRPC", grpc_link)],
         [_make_copy_btn("📋 Salin Link HTTPUpgrade", upg_link)],
-        [InlineKeyboardButton(text="⬅️ Kembali ke Menu", callback_data="menu_main")]
+        [_make_copy_btn("📋 Salin Link SlowDNS (NTLS)", sd_link)],
+        [_make_copy_btn("📋 Salin Public Key SlowDNS", pub_key)] if pub_key != "-" else None,
+        [InlineKeyboardButton(text="⬅️ Kembali ke Menu", callback_data="menu_main")],
     ]
-    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+    return text, InlineKeyboardMarkup(inline_keyboard=[r for r in rows if r])
 
 def _slowdns_pubkey() -> str:
     """Public key SlowDNS dari /etc/slowdns/server.pub (hanya key publik, 64 hex)."""
