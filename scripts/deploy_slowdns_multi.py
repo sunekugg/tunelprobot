@@ -51,6 +51,7 @@ WantedBy=multi-user.target
 
     # 3. Regenerate slowdns.service via bot (satu sumber kode)
     regen = (
+        "import sys; sys.path.insert(0, '/opt/tunnel-bot')\n"
         "from bot import system_manager as sm\n"
         "dom = sm.DOMAIN\n"
         "if not dom:\n"
@@ -61,7 +62,7 @@ WantedBy=multi-user.target
         "print('slowdns ns-domain:', dom)\n"
     )
     sh(f"cat > /tmp/_regen_sd.py <<'PYEOF'\n{regen}\nPYEOF")
-    rc, _ = sh("cd /opt/tunnel-bot && /opt/tunnel-bot/.venv/bin/python /tmp/_regen_sd.py")
+    rc, _ = sh("PYTHONPATH=/opt/tunnel-bot /opt/tunnel-bot/.venv/bin/python /tmp/_regen_sd.py")
     if rc != 0:
         print("FATAL: gagal regenerate slowdns.service", file=sys.stderr)
         sys.exit(1)
