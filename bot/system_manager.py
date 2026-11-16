@@ -464,6 +464,11 @@ def _zivpn_remote_py(action: str, password: str) -> str:
     Dipakai lokal & remote supaya tak bergantung pada repo/vpn_engine di node tujuan.
     action: 'add' | 'remove'. Array auth.config tak pernah dikosongkan (min 1 'zivpn')."""
     p_b64 = base64.b64encode((password or "").encode("utf-8")).decode("ascii")
+    if action == "add":
+        mutate = "conf.append(pw) if pw not in conf else None"
+    else:
+        # tak pernah kosongkan array: sisakan minimal 1 default 'zivpn'
+        mutate = 'conf=[x for x in conf if x!=pw]\nif not conf: conf=["zivpn"]'
     py = (
         "import json,base64,os,sys\n"
         f"pw=base64.b64decode('{p_b64}').decode('utf-8')\n"
@@ -475,7 +480,7 @@ def _zivpn_remote_py(action: str, password: str) -> str:
         "auth=cfg.setdefault('auth',{})\n"
         "conf=auth.get('config')\n"
         "if not isinstance(conf,list): conf=[]\n"
-        f"{'conf.append(pw) if pw not in conf else None' if action == 'add' else 'conf=[x for x in conf if x!=pw] or [\"zivpn\"]'}\n"
+        f"{mutate}\n"
         "auth['config']=conf; cfg['auth']=auth\n"
         "tmp=cf+'.tmp'; json.dump(cfg,open(tmp,'w'),indent=2); os.replace(tmp,cf)\n"
         "os.system('systemctl restart zivpn >/dev/null 2>&1')\n"
