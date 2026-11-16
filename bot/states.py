@@ -9,6 +9,9 @@ class CreateSSHFSM(StatesGroup):
     password = State()
     confirm = State()
 
+class CreateZivpnFSM(StatesGroup):
+    password = State()
+
 class AdminCustomAccountFSM(StatesGroup):
     server_id = State()
     acc_type = State()

@@ -384,7 +384,7 @@ echo "✅ DEPLOY SELESAI — $DOMAIN"
 echo "=============================================================="
 echo ""
 echo "Status service:"
-for s in tunnel-bot ws-ssh xray haproxy nginx dropbear slowdns udp-custom udpgw; do
+for s in tunnel-bot ws-ssh xray haproxy nginx dropbear slowdns udp-custom udpgw zivpn; do
   st="$(systemctl is-active "$s" 2>/dev/null || echo inactive)"
   if systemctl cat "$s" >/dev/null 2>&1; then
     printf "  %-14s %s\n" "$s" "$st"

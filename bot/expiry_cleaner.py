@@ -4,7 +4,8 @@ import aiosqlite
 from .config import DB_PATH, now_wib
 from .db import get_setting
 from .system_manager import (
-    parse_duration, delete_ssh_on_server, sync_xray_by_server, generate_portable_backup_sh
+    parse_duration, delete_ssh_on_server, sync_xray_by_server, generate_portable_backup_sh,
+    remove_zivpn_on_server
 )
 
 def parse_wib_dt(dt_str: str) -> datetime.datetime | None:
@@ -95,12 +96,18 @@ async def purge_accounts(
         return 0, []
 
     need_xray_servers: set[int] = set()
+    zivpn_to_remove: list[tuple[int, str]] = []
     deleted_names: list[str] = []
     wib_log_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
         await db.execute("PRAGMA busy_timeout=10000;")
         for acc_id, tg_id, acc_type, uname, exp_at, created_at, srv_id, reason in to_delete:
+            if acc_type == "zivpn":
+                # Kredensial ZiVPN = password; ambil SEBELUM baris dihapus.
+                async with db.execute("SELECT COALESCE(password_or_uuid, username) FROM accounts WHERE id = ?", (acc_id,)) as cur:
+                    _r = await cur.fetchone()
+                zivpn_to_remove.append((srv_id, (_r[0] if _r and _r[0] else uname)))
             await db.execute("DELETE FROM accounts WHERE id = ?", (acc_id,))
             await db.execute(
                 "INSERT INTO logs (tg_id, action, detail, created_at) VALUES (?, ?, ?, ?)",
@@ -114,6 +121,9 @@ async def purge_accounts(
             await delete_ssh_on_server(srv_id, uname)
         else:
             need_xray_servers.add(srv_id)
+
+    for z_sid, z_pwd in zivpn_to_remove:
+        await remove_zivpn_on_server(z_sid, z_pwd)
 
     for sid in need_xray_servers:
         await sync_xray_by_server(sid)

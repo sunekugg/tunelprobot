@@ -237,6 +237,32 @@ def format_ssh_output(domain: str, user: str, pwd: str, limit_ip: int, expired_d
     rows.append([InlineKeyboardButton(text="⬅️ Kembali ke Menu", callback_data="menu_main")])
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
+
+def format_zivpn_output(password: str, domain: str, city: str, isp: str, exp_str: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Box ZiVPN persis sesuai SPEK: 'Success:' + <pre><code> dgn border ┌│─└┘.
+    Lebar kolom label = 11 ('Host'+7sp, 'Expire'+5sp) agar ':' rata vertikal."""
+    h = html.escape
+    label_w = 11
+
+    def _row(label: str, value: str) -> str:
+        return f"│ {label.ljust(label_w)} : {value}"
+
+    box = (
+        "CREATE AKUN ZIVPN\n"
+        "┌────────────────────────┐\n"
+        f"{_row('Host', h(domain))}\n"
+        f"{_row('CITY', h(city))}\n"
+        f"{_row('ISP', h(isp))}\n"
+        f"{_row('Pass', h(password))}\n"
+        f"{_row('Expire', h(exp_str))}\n"
+        "└────────────────────────┘"
+    )
+    rows = [
+        [_make_copy_btn("📋 Salin Password", password)],
+        [InlineKeyboardButton(text="⬅️ Kembali ke Menu", callback_data="menu_main")],
+    ]
+    return f"<b>Success:</b>\n<pre><code>{box}</code></pre>", InlineKeyboardMarkup(inline_keyboard=rows)
+
 def parse_external_xray_link(raw_text: str) -> dict | None:
     import re
     import json

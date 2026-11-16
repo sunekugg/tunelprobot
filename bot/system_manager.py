@@ -458,6 +458,52 @@ async def lock_ssh_on_server(server_id: int, username: str, lock: bool = True, p
     else:
         await asyncio.to_thread(_run_remote_ssh_sync, srv, f"usermod -U {u_q}")
 
+
+def _zivpn_remote_py(action: str, password: str) -> str:
+    """Bash cmd (python3 inline) utk tambah/hapus password ZiVPN di VPS mana pun.
+    Dipakai lokal & remote supaya tak bergantung pada repo/vpn_engine di node tujuan.
+    action: 'add' | 'remove'. Array auth.config tak pernah dikosongkan (min 1 'zivpn')."""
+    p_b64 = base64.b64encode((password or "").encode("utf-8")).decode("ascii")
+    py = (
+        "import json,base64,os,sys\n"
+        f"pw=base64.b64decode('{p_b64}').decode('utf-8')\n"
+        f"cf={ZIVPN_CONFIG!r}\n"
+        "import re\n"
+        "if not re.match(r'^[A-Za-z0-9]{3,64}$', pw): print('ERR:pass-format'); sys.exit(1)\n"
+        "if not os.path.exists(cf): print('ERR:no-config'); sys.exit(1)\n"
+        "cfg=json.load(open(cf))\n"
+        "auth=cfg.setdefault('auth',{})\n"
+        "conf=auth.get('config')\n"
+        "if not isinstance(conf,list): conf=[]\n"
+        f"{'conf.append(pw) if pw not in conf else None' if action == 'add' else 'conf=[x for x in conf if x!=pw] or [\"zivpn\"]'}\n"
+        "auth['config']=conf; cfg['auth']=auth\n"
+        "tmp=cf+'.tmp'; json.dump(cfg,open(tmp,'w'),indent=2); os.replace(tmp,cf)\n"
+        "os.system('systemctl restart zivpn >/dev/null 2>&1')\n"
+        "print('OK')\n"
+    )
+    return "python3 -c " + shlex.quote(py)
+
+
+async def add_zivpn_on_server(server_id: int, password: str) -> tuple[bool, str]:
+    """Tambah password ZiVPN di server (lokal / remote via SSH)."""
+    srv = await get_server_by_id(server_id)
+    if not srv:
+        return False, "Server tidak ditemukan."
+    if not srv.get("is_local", 1) == 1 and not os.path.exists(SSH_KEY_PRIV) \
+            and not str(srv.get("ssh_pass", "")).strip():
+        return False, "Kredensial SSH node remote belum tersedia."
+    ok, msg = await asyncio.to_thread(_run_remote_ssh_detail_sync, srv, _zivpn_remote_py("add", password), 25)
+    return ok, (msg if ok else f"Gagal tambah ZiVPN di server: {msg}")
+
+
+async def remove_zivpn_on_server(server_id: int, password: str) -> tuple[bool, str]:
+    """Hapus password ZiVPN dari server (lokal / remote via SSH)."""
+    srv = await get_server_by_id(server_id)
+    if not srv:
+        return True, "Server tidak ditemukan (dianggap sudah terhapus)."
+    ok, msg = await asyncio.to_thread(_run_remote_ssh_detail_sync, srv, _zivpn_remote_py("remove", password), 25)
+    return ok, msg
+
 def _write_local_xray_sync(trojan_clients: list, vless_clients: list, vmess_clients: list):
     try:
         payload_b64 = base64.b64encode(json.dumps({"trojan": trojan_clients, "vless": vless_clients, "vmess": vmess_clients}).encode("utf-8")).decode("ascii")
@@ -544,6 +590,15 @@ SLOWDNS_KEY = "/etc/slowdns/server.key"
 SLOWDNS_PORT = 5300
 UDPC_PORT = 36712
 UDPGW_PORT = 7300
+
+# === ZIVPN (UDP proxy :5667, redirect 6000:19999) ===
+ZIVPN_BIN = "/usr/local/bin/zivpn"
+ZIVPN_CONFIG = "/etc/zivpn/config.json"
+ZIVPN_SERVICE = "zivpn"
+ZIVPN_LISTEN_PORT = 5667
+# Regex ZiVPN hanya menerima alfanumerik (tanda '-' DITOLAK oleh binary) —
+# karena itu prefix akun di-join tanpa '-' (lihat handlers_user).
+_ZIVPN_PASS_RE = re.compile(r"^[A-Za-z0-9]{3,64}$")
 
 def _sh(cmd: str, timeout: int = 120) -> tuple[int, str]:
     try:
@@ -638,16 +693,22 @@ def _iptables_script() -> str:
         'IFACE=$(ip route get 8.8.8.8 2>/dev/null | awk \'{print $5; exit}\')\n'
         '[ -z "$IFACE" ] && IFACE="eth0"\n'
         "# hapus hanya rule milik kita, jangan flush PREROUTING (bisa buang rule lain)\n"
-        f"iptables -t nat -D PREROUTING -i \"$IFACE\" -p udp --dport {SLOWDNS_PORT} -j ACCEPT 2>/dev/null\n"
-        f"iptables -t nat -D PREROUTING -i \"$IFACE\" -p udp --dport 53 -j REDIRECT --to-ports {SLOWDNS_PORT} 2>/dev/null\n"
-        f"iptables -t nat -D PREROUTING -i \"$IFACE\" -p udp --dport {UDPGW_PORT} -j ACCEPT 2>/dev/null\n"
-        f"iptables -t nat -D PREROUTING -i \"$IFACE\" -p udp --dport 1:65535 -j REDIRECT --to-ports {UDPC_PORT} 2>/dev/null\n"
-        "# urutan WAJIB: pengecualian dulu, catch-all terakhir\n"
-        f"iptables -t nat -A PREROUTING -i \"$IFACE\" -p udp --dport {SLOWDNS_PORT} -j ACCEPT\n"
-        f"iptables -t nat -A PREROUTING -i \"$IFACE\" -p udp --dport 53 -j REDIRECT --to-ports {SLOWDNS_PORT}\n"
-        f"iptables -t nat -A PREROUTING -i \"$IFACE\" -p udp --dport {UDPGW_PORT} -j ACCEPT\n"
-        f"iptables -t nat -A PREROUTING -i \"$IFACE\" -p udp --dport 1:65535 -j REDIRECT --to-ports {UDPC_PORT}\n"
-        f"for P in 53 {SLOWDNS_PORT} {UDPC_PORT} {UDPGW_PORT}; do\n"
+        f'iptables -t nat -D PREROUTING -i "$IFACE" -p udp --dport {SLOWDNS_PORT} -j ACCEPT 2>/dev/null\n'
+        f'iptables -t nat -D PREROUTING -i "$IFACE" -p udp --dport 53 -j REDIRECT --to-ports {SLOWDNS_PORT} 2>/dev/null\n'
+        f'iptables -t nat -D PREROUTING -i "$IFACE" -p udp --dport {UDPGW_PORT} -j ACCEPT 2>/dev/null\n'
+        f'iptables -t nat -D PREROUTING -i "$IFACE" -p udp --dport {ZIVPN_LISTEN_PORT} -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT} 2>/dev/null\n'
+        f'iptables -t nat -D PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT} 2>/dev/null\n'
+        f'iptables -t nat -D PREROUTING -i "$IFACE" -p udp --dport 1:65535 -j REDIRECT --to-ports {UDPC_PORT} 2>/dev/null\n'
+        "# urutan WAJIB: pengecualian dulu, catch-all terakhir.\n"
+        "# ZiVPN (6000:19999 -> 5667) HARUS sebelum catch-all 1:65535 -> udp-custom,\n"
+        "# kalau tidak semua paket udp 6000-19999 tersedot ke udp-custom dan ZiVPN mati.\n"
+        f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport {SLOWDNS_PORT} -j ACCEPT\n'
+        f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 53 -j REDIRECT --to-ports {SLOWDNS_PORT}\n'
+        f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport {UDPGW_PORT} -j ACCEPT\n'
+        f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport {ZIVPN_LISTEN_PORT} -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT}\n'
+        f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT}\n'
+        f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 1:65535 -j REDIRECT --to-ports {UDPC_PORT}\n'
+        f"for P in 53 {SLOWDNS_PORT} {UDPC_PORT} {UDPGW_PORT} {ZIVPN_LISTEN_PORT} 6000:19999; do\n"
         "  iptables -C INPUT -p udp --dport $P -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p udp --dport $P -j ACCEPT\n"
         "done\n"
         "mkdir -p /etc/iptables\n"
@@ -730,6 +791,14 @@ def install_udp_stack() -> str:
     ok_uc = _fetch_bin("udp-custom", uc_urls)
     lines.append(f"udp-custom: {'OK' if ok_uc else 'GAGAL unduh'}")
 
+    # ZiVPN (UDP proxy :5667) — opsional: gagal unduh tidak menggagalkan stack lain.
+    ok_z = _fetch_bin("zivpn", [
+        f"https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-{arch}",
+        f"https://ghfast.top/https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-{arch}",
+        f"https://gh-proxy.com/https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-{arch}",
+    ])
+    lines.append(f"zivpn: {'OK' if ok_z else 'GAGAL unduh'}")
+
     if ok_v:
         _sh("ln -sf /usr/local/bin/vaydns-server /usr/local/bin/dnstt-server")
 
@@ -742,6 +811,33 @@ def install_udp_stack() -> str:
         lines.append(f"public key: {'dibuat' if os.path.exists(SLOWDNS_PUB) else 'gagal'}")
 
     _write("/etc/udp/config.json", _UDP_CUSTOM_CONF)
+    # ZiVPN: self-signed cert + config + unit systemd (hanya bila binary ada).
+    if ok_z:
+        _sh("mkdir -p /etc/zivpn")
+        if not (os.path.exists("/etc/zivpn/zivpn.crt") and os.path.getsize("/etc/zivpn/zivpn.crt") > 0
+                and os.path.exists("/etc/zivpn/zivpn.key") and os.path.getsize("/etc/zivpn/zivpn.key") > 0):
+            _sh('openssl req -x509 -nodes -days 3650 -newkey rsa:2048 '
+                '-keyout /etc/zivpn/zivpn.key -out /etc/zivpn/zivpn.crt '
+                '-subj "/CN=zivpn" >/dev/null 2>&1')
+        for _zp, _zm in (("/etc/zivpn/zivpn.key", 0o600), ("/etc/zivpn/zivpn.crt", 0o644)):
+            if os.path.exists(_zp):
+                os.chmod(_zp, _zm)
+        if not os.path.exists(ZIVPN_CONFIG):
+            _write(ZIVPN_CONFIG, json.dumps({
+                "listen": f":{ZIVPN_LISTEN_PORT}",
+                "cert": "/etc/zivpn/zivpn.crt",
+                "key": "/etc/zivpn/zivpn.key",
+                "obfs": "zivpn",
+                "auth": {"mode": "passwords", "config": ["zivpn"]},
+            }, indent=2))
+        # config sudah ada = sumber kebenaran (password akun) — JANGAN ditimpa.
+        _write("/etc/systemd/system/zivpn.service",
+               "[Unit]\nDescription=ZiVPN UDP Server (port 5667)\nAfter=network.target\n\n"
+               "[Service]\nType=simple\n"
+               f"ExecStart={ZIVPN_BIN} server -c {ZIVPN_CONFIG}\n"
+               "Restart=always\nRestartSec=3\nLimitNOFILE=65535\n\n"
+               "[Install]\nWantedBy=multi-user.target\n")
+        lines.append("zivpn config+service: OK")
     # Mux Multi-Protokol: wajib terpasang sebelum slowdns dianggap siap.
     ok_mux = _install_slowdns_mux()
     lines.append(f"slowdns mux: {'OK' if ok_mux else 'GAGAL'}")
@@ -779,6 +875,8 @@ def install_udp_stack() -> str:
         svcs.append("udpgw")
     if ok_uc:
         svcs.append("udp-custom")
+    if ok_z:
+        svcs.append("zivpn")
     svcs.append("iptables-restore")
     _sh("systemctl enable --now " + " ".join(svcs) + " 2>&1")
     _sh("systemctl restart " + " ".join(svcs) + " 2>&1")
@@ -788,10 +886,90 @@ def restart_udp_services(which: str) -> str:
     """which: slowdns | udp-custom | udpgw | all"""
     if which == "all":
         _sh("/etc/iptables/apply-slowdns-udp.sh")
-        rc, out = _sh("systemctl restart slowdns udp-custom udpgw iptables-restore 2>&1")
+        _svcs = "slowdns udp-custom udpgw iptables-restore"
+        if _sh("systemctl cat zivpn >/dev/null 2>&1")[0] == 0:
+            _svcs += " zivpn"
+        rc, out = _sh(f"systemctl restart {_svcs} 2>&1")
         return "iptables + slowdns + udp-custom + udpgw di-restart." if rc == 0 else f"Gagal: {out[:200]}"
     rc, out = _sh(f"systemctl restart {shlex.quote(which)} 2>&1")
     return f"{which} di-restart." if rc == 0 else f"Gagal restart {which}: {out[:200]}"
+
+def _zivpn_restart() -> bool:
+    """Restart service zivpn. Bila unit belum terpasang, anggap sukses
+    (config tetap tersimpan; restart terjadi saat service nanti terpasang)."""
+    if _sh("systemctl cat zivpn >/dev/null 2>&1")[0] != 0:
+        return True
+    return _sh("systemctl restart zivpn 2>&1")[0] == 0
+
+
+def load_zivpn_config() -> dict:
+    with open(ZIVPN_CONFIG, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_zivpn_config(cfg: dict) -> None:
+    """Tulis atomik: proses mati di tengah tak menyisakan config korup."""
+    tmp = ZIVPN_CONFIG + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+    os.replace(tmp, ZIVPN_CONFIG)
+
+
+def add_zivpn_user(password: str, uuid_str: str | None = None) -> tuple[bool, str]:
+    """Tambah password plaintext ke auth.config ZiVPN. uuid_str diabaikan
+    (uname=secret=password), ada demi kompatibilitas pemanggil lintas-protokol."""
+    if not isinstance(password, str) or not _ZIVPN_PASS_RE.match(password):
+        return False, "Password ZiVPN harus huruf/angka, minimal 3 karakter."
+    if not os.path.exists(ZIVPN_CONFIG):
+        return False, "config zivpn belum ada"
+    try:
+        cfg = load_zivpn_config()
+    except Exception as e:
+        return False, f"Gagal baca config zivpn: {e}"
+    auth = cfg.setdefault("auth", {})
+    if auth.get("mode") != "passwords":
+        return False, "Config zivpn bukan mode 'passwords'."
+    conf = auth.get("config")
+    if not isinstance(conf, list):
+        return False, "Config zivpn 'auth.config' bukan list."
+    if password not in conf:
+        conf.append(password)
+    try:
+        save_zivpn_config(cfg)
+    except Exception as e:
+        return False, f"Gagal simpan config zivpn: {e}"
+    if not _zivpn_restart():
+        return False, "Gagal restart service zivpn."
+    return True, f"Password ZiVPN {password} berhasil ditambahkan."
+
+
+def remove_zivpn_user(password: str) -> tuple[bool, str]:
+    """Hapus password dari auth.config ZiVPN. Array tak pernah dikosongkan —
+    sisakan minimal 1 default 'zivpn' agar service tetap bisa start."""
+    if not os.path.exists(ZIVPN_CONFIG):
+        return False, "config zivpn belum ada"
+    try:
+        cfg = load_zivpn_config()
+    except Exception as e:
+        return False, f"Gagal baca config zivpn: {e}"
+    auth = cfg.get("auth") or {}
+    conf = auth.get("config")
+    if not isinstance(conf, list):
+        return True, "OK (auth.config bukan list, tidak ada yang dihapus)."
+    new_conf = [p for p in conf if p != password]
+    if not new_conf:
+        new_conf = ["zivpn"]
+    if new_conf == conf:
+        return True, "OK (password tidak ditemukan)."
+    auth["config"] = new_conf
+    cfg["auth"] = auth
+    try:
+        save_zivpn_config(cfg)
+    except Exception as e:
+        return False, f"Gagal simpan config zivpn: {e}"
+    _zivpn_restart()
+    return True, f"Password ZiVPN {password} berhasil dihapus."
+
 
 def regen_slowdns_key() -> tuple[bool, str]:
     if not os.path.exists("/usr/local/bin/vaydns-server"):

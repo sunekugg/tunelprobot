@@ -30,15 +30,16 @@ from .db import (
 from .keyboards import main_menu_kb, cancel_kb, server_picker_kb
 from .force_join import check_user_membership, invalidate_join_cache
 from .formatter import (
-    format_trojan_output, format_ssh_output,
+    format_trojan_output, format_ssh_output, format_zivpn_output,
     build_vless_messages, build_vmess_messages, send_multi_part_output, build_injected_xray_html
 )
 from .system_manager import (
     get_isp_info, parse_duration, format_expired_display, system_user_exists,
     create_ssh_on_server, delete_ssh_on_server, sync_xray_by_server, get_server_stats,
-    format_bytes_human, generate_portable_backup_sh, send_account_topic_notification
+    format_bytes_human, generate_portable_backup_sh, send_account_topic_notification,
+    add_zivpn_on_server, remove_zivpn_on_server
 )
-from .states import CreateXrayFSM, CreateSSHFSM, BugInjectFSM
+from .states import CreateXrayFSM, CreateSSHFSM, CreateZivpnFSM, BugInjectFSM
 
 router = Router()
 
@@ -88,7 +89,7 @@ async def cb_verify_force_join(call: CallbackQuery, state: FSMContext):
 async def cb_srv_full_alert(call: CallbackQuery):
     await call.answer("⚠️ Server ini sudah mencapai batas maksimal user! Silakan pilih server lain.", show_alert=True)
 
-@router.callback_query(F.data.in_({"trial_ssh", "trial_trojan", "trial_vless", "trial_vmess", "create_ssh", "create_xray:trojan", "create_xray:vless", "create_xray:vmess"}))
+@router.callback_query(F.data.in_({"trial_ssh", "trial_trojan", "trial_vless", "trial_vmess", "create_ssh", "create_xray:trojan", "create_xray:vless", "create_xray:vmess", "create:zivpn:0", "create:zivpn:1"}))
 async def cb_choose_server_first(call: CallbackQuery, state: FSMContext):
     uid = call.from_user.id
     allowed, deny_msg = await check_creation_allowed(uid)
@@ -103,6 +104,63 @@ async def cb_choose_server_first(call: CallbackQuery, state: FSMContext):
         reply_markup=server_picker_kb(servers, act, "menu_main")
     )
     await call.answer()
+
+async def _zivpn_finalize(bot, chat_target, edit_call, uid: int, full_name: str, sid: int,
+                          s_dom: str, s_name: str, passwd: str, is_trial: int,
+                          dur_label: str) -> tuple[bool, str]:
+    """Buat akun ZiVPN end-to-end: tulis password ke server, simpan DB, kirim output.
+    Return (ok, pesan_error). passwd SUDAH bersih (tanpa '-')."""
+    now_dt = now_wib()
+    created_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    if is_trial:
+        td = parse_duration(dur_label) or datetime.timedelta(minutes=30)
+        exp_str = (now_dt + td).strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        td = parse_duration(await get_effective_duration(uid))
+        exp_str = (now_dt + td).strftime("%Y-%m-%d %H:%M:%S") if td else "Unlimited"
+    # Format tampilan khusus ZiVPN sesuai SPEK: '%d %B %Y %H:%M'
+    if exp_str == "Unlimited":
+        exp_disp = "Unlimited"
+    else:
+        exp_disp = (datetime.datetime.strptime(exp_str, "%Y-%m-%d %H:%M:%S")
+                    .strftime("%d %B %Y %H:%M"))
+
+    srv = await get_server_by_id(sid)
+    def_q = float(await get_setting("default_quota_gb") or 0)
+    def_spd = int((srv.get("speed_mbps") if srv else 0) or 0) or int(await get_setting("default_speed_mbps") or 0)
+
+    ok, msg = await add_zivpn_on_server(sid, passwd)
+    if not ok:
+        return False, f"Gagal menambahkan password ZiVPN di server: {msg}"
+
+    async with aiosqlite.connect(DB_PATH, timeout=15) as db:
+        await db.execute(
+            "INSERT INTO accounts (tg_id, acc_type, username, password_or_uuid, expired_at, limit_ip, is_trial, created_at, server_id, quota_gb, speed_mbps) "
+            "VALUES (?, 'zivpn', ?, ?, ?, -1, ?, ?, ?, ?, ?)",
+            (uid, passwd, passwd, exp_str, is_trial, created_str, sid, def_q, def_spd)
+        )
+        await db.commit()
+
+    await record_account_creation(uid, "zivpn", passwd, bot=bot)
+    await generate_portable_backup_sh()
+    city, isp = await get_isp_info()
+    kind = "TRIAL_" if is_trial else ""
+    await add_log(uid, f"CREATE_{kind}ZIVPN", f"Pass: {passwd} (Srv #{sid}, Exp: {exp_str})")
+    asyncio.create_task(send_account_topic_notification(
+        bot, uid, full_name, "zivpn", passwd, sid, exp_str,
+        is_trial=bool(is_trial), dur_label=dur_label
+    ))
+
+    text, kb = format_zivpn_output(passwd, s_dom, city, isp, exp_disp)
+    try:
+        if edit_call is not None:
+            await _safe_edit(edit_call, text, reply_markup=kb)
+        else:
+            await chat_target.answer(text, reply_markup=kb)
+    except Exception:
+        await chat_target.answer(text, reply_markup=kb)
+    return True, "OK"
+
 
 @router.callback_query(F.data.startswith("pick_srv:"))
 async def cb_picked_server(call: CallbackQuery, state: FSMContext):
@@ -179,6 +237,44 @@ async def cb_picked_server(call: CallbackQuery, state: FSMContext):
             asyncio.create_task(send_account_topic_notification(call.bot, uid, call.from_user.full_name, "ssh", uname_ssh, sid, exp_str, is_trial=True, dur_label=trial_dur_str))
             await _safe_edit(call, text, reply_markup=kb)
 
+    elif act == "create:zivpn_0" or act == "create:zivpn_1":
+        is_trial_z = act.endswith("_1")
+        uid = call.from_user.id
+        allowed, deny_msg = await check_creation_allowed(uid)
+        if not allowed and not await is_user_admin(uid):
+            await state.clear()
+            await _safe_edit(call, f"⚠️ {deny_msg}", reply_markup=main_menu_kb(await is_user_admin(uid)))
+            await call.answer()
+            return
+
+        if is_trial_z:
+            await call.answer("⏳ Sedang membuat akun trial ZiVPN...")
+            trial_dur_str = await get_setting("trial_duration") or "30m"
+            rand_str = "".join(random.choices(string.digits, k=5))
+            # Prefix di-join TANPA '-' (ZiVPN hanya menerima alfanumerik).
+            raw = (apply_prefix(f"trial{rand_str}") or f"trial{rand_str}").replace("-", "")
+            ok, res_txt = await _zivpn_finalize(
+                call.bot, call.message, call, uid, call.from_user.full_name,
+                sid, s_dom, srv["name"], raw, is_trial=1, dur_label=trial_dur_str
+            )
+            if not ok:
+                await _safe_edit(call, f"❌ {res_txt}", reply_markup=main_menu_kb(await is_user_admin(uid)))
+            return
+
+        # Reguler: minta 1 input berupa Password/Key ZiVPN.
+        await state.set_state(CreateZivpnFSM.password)
+        await state.update_data(started_at=datetime.datetime.now().timestamp())
+        await _safe_edit(
+            call,
+            f"🔏 <b>Buat Akun ZiVPN — {html.escape(srv['name'])} ({html.escape(s_dom)})</b>\n\n"
+            f"Masukkan <b>Password / Key ZiVPN</b>:\n"
+            f"• Hanya huruf &amp; angka (<code>a-z0-9</code>), 3 - 64 karakter\n"
+            f"• Tanda <code>-</code> tidak didukung ZiVPN &amp; akan dihapus otomatis\n"
+            f"• Prefix <code>{USERNAME_PREFIX}</code> ditambahkan otomatis (tanpa <code>-</code>)",
+            reply_markup=cancel_kb()
+        )
+        await call.answer()
+
     elif act == "create_ssh":
         await state.set_state(CreateSSHFSM.username)
         await state.update_data(started_at=datetime.datetime.now().timestamp())
@@ -203,6 +299,65 @@ async def cb_picked_server(call: CallbackQuery, state: FSMContext):
             reply_markup=cancel_kb()
         )
         await call.answer()
+
+@router.message(CreateZivpnFSM.password)
+async def fsm_zivpn_password(message: Message, state: FSMContext):
+    raw_in = (message.text or "").strip()
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    data = await state.get_data()
+    if datetime.datetime.now().timestamp() - data.get("started_at", 0) > 120:
+        await state.clear()
+        await message.answer("⏱ Waktu input habis (timeout 2 menit).", reply_markup=main_menu_kb(await is_user_admin(message.from_user.id)))
+        return
+
+    # ZiVPN hanya menerima alfanumerik: buang '-' & spasi, terapkan prefix.
+    clean = re.sub(r"[^A-Za-z0-9]", "", raw_in).lower()
+    if len(clean) < 3:
+        await message.answer("❌ <b>Password ZiVPN tidak valid!</b> Minimal 3 karakter huruf/angka:", reply_markup=cancel_kb())
+        return
+    passwd = apply_prefix(clean).replace("-", "")
+    if not re.match(r"^[a-z0-9]{3,64}$", passwd):
+        await message.answer("❌ <b>Password ZiVPN tidak valid!</b> Gunakan huruf &amp; angka (3-64 karakter):", reply_markup=cancel_kb())
+        return
+
+    # username = password (kolom UNIQUE) — cek dini agar user lihat pesan jelas.
+    async with aiosqlite.connect(DB_PATH, timeout=15) as db:
+        async with db.execute("SELECT 1 FROM accounts WHERE username = ?", (passwd,)) as cur:
+            if await cur.fetchone():
+                await message.answer("❌ <b>Password ZiVPN ini sudah dipakai akun lain.</b> Gunakan password lain:", reply_markup=cancel_kb())
+                return
+
+    sid = int(data.get("server_id", 1))
+    s_dom = data.get("server_domain", DOMAIN)
+    s_name = data.get("server_name", "Server Utama")
+    srv = await get_server_by_id(sid)
+    if srv and srv["max_users"] > 0 and srv["used_users"] >= srv["max_users"]:
+        await state.clear()
+        await message.answer("⚠️ Maaf, kuota server tersebut baru saja penuh.")
+        return
+
+    uid = message.from_user.id
+    allowed, deny_msg = await check_creation_allowed(uid)
+    if not allowed and not await is_user_admin(uid):
+        await state.clear()
+        await message.answer(f"⚠️ {deny_msg}")
+        return
+
+    await state.clear()
+    ok, res_txt = await _zivpn_finalize(
+        message.bot, message, None, uid, message.from_user.full_name,
+        sid, s_dom, s_name, passwd, is_trial=0,
+        dur_label=await get_effective_duration(uid)
+    )
+    if not ok:
+        await message.answer(f"❌ {res_txt}", reply_markup=main_menu_kb(await is_user_admin(uid)))
+        return
+    await message.answer("✅ Akun ZiVPN berhasil dibuat!")
+
 
 @router.message(CreateXrayFSM.remark)
 async def fsm_xray_remark(message: Message, state: FSMContext):
@@ -417,6 +572,19 @@ async def cb_view_acc(call: CallbackQuery):
         city, isp = await get_isp_info()
         text, kb = format_trojan_output(uname, city, isp, s_dom, secret, eff_lim, exp_disp)
         await _safe_edit(call, text, reply_markup=kb)
+    elif acc_type == "zivpn":
+        city, isp = await get_isp_info()
+        trial_dur_str = await get_setting("trial_duration") or "30m"
+        exp_disp_z = format_expired_display(exp_at, is_trial=is_trial, trial_dur_str=trial_dur_str)
+        if exp_disp_z != "Unlimited":
+            import datetime as _dt
+            try:
+                _d = _dt.datetime.strptime(exp_disp_z.split(" (")[0].strip(), "%Y-%m-%d %H:%M:%S")
+                exp_disp_z = _d.strftime("%d %B %Y %H:%M") + (" (Trial)" if is_trial else "")
+            except Exception:
+                pass
+        text, kb = format_zivpn_output(secret, s_dom, city, isp, exp_disp_z)
+        await _safe_edit(call, text, reply_markup=kb)
     else:
         text, kb = format_ssh_output(s_dom, uname, secret, eff_lim, exp_disp, show_pass=(uid == owner_id or adm))
         await _safe_edit(call, text, reply_markup=kb)
@@ -448,17 +616,19 @@ async def cb_usr_del_yes(call: CallbackQuery):
     acc_id = int(call.data.split(":")[1])
     uid = call.from_user.id
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
-        async with db.execute("SELECT acc_type, username, COALESCE(server_id, 1) FROM accounts WHERE id = ? AND tg_id = ?", (acc_id, uid)) as cur:
+        async with db.execute("SELECT acc_type, username, COALESCE(server_id, 1), COALESCE(password_or_uuid, username) FROM accounts WHERE id = ? AND tg_id = ?", (acc_id, uid)) as cur:
             row = await cur.fetchone()
         if not row:
             await call.answer("Akun tidak ditemukan.", show_alert=True)
             return
-        acc_type, uname, sid = row
+        acc_type, uname, sid, secret = row
         await db.execute("DELETE FROM accounts WHERE id = ?", (acc_id,))
         await db.commit()
 
     if acc_type == "ssh":
         await delete_ssh_on_server(sid, uname)
+    elif acc_type == "zivpn":
+        await remove_zivpn_on_server(sid, secret)
     else:
         await sync_xray_by_server(sid)
     await generate_portable_backup_sh()
@@ -1066,6 +1236,8 @@ async def cb_my_accounts(call: CallbackQuery, state: FSMContext):
         row_btn = [InlineKeyboardButton(text=f"📄 Config: {uname}", callback_data=f"view_acc:{acc_id}")]
         if acc_type in ("vless", "vmess", "trojan"):
             row_btn.append(InlineKeyboardButton(text="🎯 Inject Bug", callback_data=f"bug_menu:{acc_id}"))
+        if acc_type == "zivpn":
+            row_btn.append(InlineKeyboardButton(text="🔀 Pindah Server", callback_data=f"usr_act_mig:{acc_id}"))
         if self_on:
             row_btn.append(InlineKeyboardButton(text="🛠 Kelola", callback_data=f"usr_manage:{acc_id}"))
         buttons.append(row_btn)
@@ -1233,6 +1405,38 @@ async def cb_usr_act_cred(call: CallbackQuery, state: FSMContext):
         )
         await call.answer()
     else:
+        if acc_type == "zivpn":
+            # ZiVPN: kredensial = password plaintext (bukan UUID).
+            new_pwd = (uname + "".join(random.choices(string.ascii_lowercase + string.digits, k=6))).replace("-", "")[:32]
+            async with aiosqlite.connect(DB_PATH, timeout=15) as db:
+                async with db.execute("SELECT password_or_uuid, COALESCE(server_id,1) FROM accounts WHERE id = ?", (acc_id,)) as cur:
+                    _r = await cur.fetchone()
+            old_pwd, z_sid = (_r[0], int(_r[1])) if _r else ("", sid)
+            ok_add, add_msg = await add_zivpn_on_server(z_sid, new_pwd)
+            if not ok_add:
+                await call.answer(f"❌ Gagal ganti password ZiVPN: {add_msg}", show_alert=True)
+                return
+            if old_pwd:
+                await remove_zivpn_on_server(z_sid, old_pwd)
+            async with aiosqlite.connect(DB_PATH, timeout=15) as db:
+                await db.execute("UPDATE accounts SET password_or_uuid = ?, username = ? WHERE id = ?", (new_pwd, new_pwd, acc_id))
+                await db.commit()
+            await generate_portable_backup_sh()
+            await call.answer("✅ Password ZiVPN baru berhasil dibuat & diaktifkan!", show_alert=True)
+            await _safe_edit(
+                call,
+                f"✅ <b>PASSWORD ZIVPN BERHASIL DIGANTI!</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>Password Baru:</b> <code>{html.escape(new_pwd)}</code>\n"
+                "• <b>Jatah Kuota Buat Akun:</b> <code>Tidak Terpotong</code>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Silakan ambil config terbaru Anda melalui tombol di bawah:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="📄 Lihat Config Baru", callback_data=f"view_acc:{acc_id}")],
+                    [InlineKeyboardButton(text="⬅️ Kembali ke Kelola Akun", callback_data=f"usr_manage:{acc_id}")]
+                ])
+            )
+            return
         ok_cd, wait_s = _check_self_cooldown(uid, f"cred_{acc_id}", cooldown_sec=120)
         if not ok_cd and not adm:
             await call.answer(f"⏳ Mohon tunggu {wait_s} detik sebelum mengganti UUID lagi.", show_alert=True)
@@ -1477,7 +1681,13 @@ async def cb_usr_do_mig(call: CallbackQuery):
     old_name = old_srv["name"] if old_srv else f"Server #{old_sid}"
 
     await call.answer("⏳ Memindahkan akun ke server baru...")
-    if acc_type == "ssh":
+    if acc_type == "zivpn":
+        ok_add, add_msg = await add_zivpn_on_server(new_sid, secret)
+        if not ok_add:
+            await call.answer(f"❌ Gagal membuat akun ZiVPN di server tujuan: {add_msg}", show_alert=True)
+            return
+        await remove_zivpn_on_server(old_sid, secret)
+    elif acc_type == "ssh":
         if not await create_ssh_on_server(new_sid, uname, secret):
             await call.answer("❌ Gagal membuat akun SSH di server tujuan.", show_alert=True)
             return
@@ -1489,7 +1699,9 @@ async def cb_usr_do_mig(call: CallbackQuery):
         await db.execute("UPDATE accounts SET server_id = ? WHERE id = ?", (new_sid, acc_id))
         await db.commit()
 
-    if acc_type in ("vless", "vmess", "trojan"):
+    if acc_type == "zivpn":
+        pass  # password ZiVPN sudah dipindah (add/remove) di atas
+    elif acc_type in ("vless", "vmess", "trojan"):
         await sync_xray_by_server(old_sid)
         await sync_xray_by_server(new_sid)
     else:

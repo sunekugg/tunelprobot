@@ -28,13 +28,14 @@ from .keyboards import admin_menu_kb, cancel_kb, limit_ip_picker_kb
 from .force_join import invalidate_join_cache
 from .expiry_cleaner import purge_accounts
 from .formatter import (
-    format_trojan_output, format_ssh_output,
+    format_trojan_output, format_ssh_output, format_zivpn_output,
     build_vless_messages, build_vmess_messages, send_multi_part_output
 )
 from .system_manager import (
     get_isp_info, parse_duration, format_expired_display,
     inspect_remote_node, use_existing_remote_node, install_remote_node_stack,
     create_ssh_on_server, delete_ssh_on_server, lock_ssh_on_server,
+    add_zivpn_on_server, remove_zivpn_on_server,
     sync_xray_by_server, update_ssh_banner, sync_banner_all_servers,
     format_bytes_human, set_server_speed_limit, sync_ssh_bw_rules_on_server,
     get_ssh_active_sessions, get_xray_active_ips, get_xray_conn_counts, get_server_stats, check_service_status,
@@ -661,14 +662,16 @@ async def cb_adm_del_all_confirm(call: CallbackQuery):
     if not await _guard_admin(call):
         return
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
-        async with db.execute("SELECT acc_type, username, COALESCE(server_id, 1) FROM accounts") as cur:
+        async with db.execute("SELECT acc_type, username, COALESCE(server_id, 1), COALESCE(password_or_uuid, username) FROM accounts") as cur:
             rows = await cur.fetchall()
         await db.execute("DELETE FROM accounts")
         await db.commit()
 
-    for acc_type, uname, sid in rows:
+    for acc_type, uname, sid, secret in rows:
         if acc_type == "ssh":
             await delete_ssh_on_server(sid, uname)
+        elif acc_type == "zivpn":
+            await remove_zivpn_on_server(sid, secret)
     await sync_xray_by_server()
     await generate_portable_backup_sh()
     await call.answer(f"🗑 Seluruh {len(rows)} akun berhasil dihapus bersih!", show_alert=True)
@@ -938,6 +941,8 @@ async def cb_adm_acc_del(call: CallbackQuery):
             await db.commit()
             if row[0] == "ssh":
                 await delete_ssh_on_server(row[2], row[1])
+            elif row[0] == "zivpn":
+                await remove_zivpn_on_server(row[2], row[1])
             else:
                 await sync_xray_by_server(row[2])
     await generate_portable_backup_sh()
@@ -960,7 +965,7 @@ async def fsm_adm_csrv(call: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔑 SSH", callback_data="adm_ctype:ssh"), InlineKeyboardButton(text="🔐 Trojan", callback_data="adm_ctype:trojan")],
         [InlineKeyboardButton(text="⚡ VLESS", callback_data="adm_ctype:vless"), InlineKeyboardButton(text="🚀 VMess", callback_data="adm_ctype:vmess")],
-        [InlineKeyboardButton(text="❌ Batal", callback_data="cancel_fsm:admin_panel")]
+        [InlineKeyboardButton(text="🔏 ZiVPN (UDP)", callback_data="adm_ctype:zivpn"), InlineKeyboardButton(text="❌ Batal", callback_data="cancel_fsm:admin_panel")]
     ])
     await _safe_edit(call, "Pilih jenis akun:", reply_markup=kb)
     await call.answer()
@@ -970,7 +975,10 @@ async def fsm_adm_ctype(call: CallbackQuery, state: FSMContext):
     ctype = call.data.split(":")[1]
     await state.update_data(acc_type=ctype)
     await state.set_state(AdminCustomAccountFSM.username)
-    await _safe_edit(call, f"Masukkan Username / Remarks untuk akun <b>{ctype.upper()}</b>:", reply_markup=cancel_kb("admin_panel"))
+    if ctype == "zivpn":
+        await _safe_edit(call, "Masukkan <b>Password / Key ZiVPN</b> (huruf &amp; angka, 3-64 karakter):", reply_markup=cancel_kb("admin_panel"))
+    else:
+        await _safe_edit(call, f"Masukkan Username / Remarks untuk akun <b>{ctype.upper()}</b>:", reply_markup=cancel_kb("admin_panel"))
     await call.answer()
 
 @router.message(AdminCustomAccountFSM.username)
@@ -1021,6 +1029,17 @@ async def fsm_adm_clim(message: Message, state: FSMContext):
     if ctype == "ssh":
         secret = data["password"]
         await create_ssh_on_server(sid, uname, secret)
+    elif ctype == "zivpn":
+        # ZiVPN: secret = password plaintext (username = password).
+        secret = re.sub(r"[^A-Za-z0-9]", "", uname).lower()
+        if not re.match(r"^[a-z0-9]{3,64}$", secret):
+            await message.answer("❌ Password ZiVPN harus 3-64 huruf/angka (tanpa spasi/simbol).")
+            return
+        ok_z, zmsg = await add_zivpn_on_server(sid, secret)
+        if not ok_z:
+            await message.answer(f"❌ Gagal tambah ZiVPN: {zmsg}")
+            return
+        uname = secret
     else:
         secret = str(uuid.uuid4())
 
@@ -1032,7 +1051,13 @@ async def fsm_adm_clim(message: Message, state: FSMContext):
         await db.commit()
 
     await generate_portable_backup_sh()
-    if ctype in ("trojan", "vless", "vmess"):
+    if ctype == "zivpn":
+        city, isp = await get_isp_info()
+        exp_disp_z = (datetime.datetime.strptime(exp_str, "%Y-%m-%d %H:%M:%S").strftime("%d %B %Y %H:%M")
+                      if exp_str != "Unlimited" else "Unlimited")
+        text, kb = format_zivpn_output(secret, s_dom, city, isp, exp_disp_z)
+        await message.answer(text, reply_markup=kb)
+    elif ctype in ("trojan", "vless", "vmess"):
         await sync_xray_by_server(sid)
         city, isp = await get_isp_info()
         if ctype == "vless":
@@ -1120,13 +1145,15 @@ async def cb_adm_usr_resetlim(call: CallbackQuery):
 async def cb_adm_usr_delaccs(call: CallbackQuery):
     tid = int(call.data.split(":")[1])
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
-        async with db.execute("SELECT acc_type, username, COALESCE(server_id, 1) FROM accounts WHERE tg_id = ?", (tid,)) as cur:
+        async with db.execute("SELECT acc_type, username, COALESCE(server_id, 1), COALESCE(password_or_uuid, username) FROM accounts WHERE tg_id = ?", (tid,)) as cur:
             rows = await cur.fetchall()
         await db.execute("DELETE FROM accounts WHERE tg_id = ?", (tid,))
         await db.commit()
-    for acc_type, uname, sid in rows:
+    for acc_type, uname, sid, secret in rows:
         if acc_type == "ssh":
             await delete_ssh_on_server(sid, uname)
+        elif acc_type == "zivpn":
+            await remove_zivpn_on_server(sid, secret)
     await sync_xray_by_server()
     await call.answer(f"🗑 {len(rows)} akun dihapus!", show_alert=True)
 
