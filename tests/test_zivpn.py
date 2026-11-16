@@ -95,4 +95,12 @@ from bot.handlers_user import router as user_router  # noqa: E402
 seen_msg = {getattr(h.callback, "__name__", "?") for h in user_router.message.handlers}
 assert "fsm_zivpn_password" in seen_msg, seen_msg
 
+# --- 8. cabang ZiVPN di cb_picked_server cocok dgn act hasil replace(":","_") ---
+# callback 'create:zivpn:0' -> act = 'create_zivpn_0' (bukan 'create:zivpn_0')
+src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "bot", "handlers_user.py"), encoding="utf-8").read()
+assert "create_zivpn_0" in src and "create_zivpn_1" in src, \
+    "cabang ZiVPN harus mencocokkan act 'create_zivpn_0/1' (tanpa titik dua)"
+assert '"create:zivpn_0"' not in src, "jangan bandingkan act dgn titik dua (tak pernah cocok)"
+
 print("OK test_zivpn")

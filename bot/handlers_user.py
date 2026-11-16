@@ -237,7 +237,8 @@ async def cb_picked_server(call: CallbackQuery, state: FSMContext):
             asyncio.create_task(send_account_topic_notification(call.bot, uid, call.from_user.full_name, "ssh", uname_ssh, sid, exp_str, is_trial=True, dur_label=trial_dur_str))
             await _safe_edit(call, text, reply_markup=kb)
 
-    elif act == "create:zivpn_0" or act == "create:zivpn_1":
+    elif act in ("create_zivpn_0", "create_zivpn_1"):
+        # catatan: act sudah di-replace(":", "_") dari callback 'create:zivpn:0/1'
         is_trial_z = act.endswith("_1")
         uid = call.from_user.id
         allowed, deny_msg = await check_creation_allowed(uid)
@@ -612,7 +613,7 @@ async def cb_usr_del_ask(call: CallbackQuery):
     await call.answer()
 
 @router.callback_query(F.data.startswith("usr_del_yes:"))
-async def cb_usr_del_yes(call: CallbackQuery):
+async def cb_usr_del_yes(call: CallbackQuery, state: FSMContext):
     acc_id = int(call.data.split(":")[1])
     uid = call.from_user.id
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
@@ -634,7 +635,7 @@ async def cb_usr_del_yes(call: CallbackQuery):
     await generate_portable_backup_sh()
     await add_log(uid, "DELETE_ACCOUNT", f"Deleted {acc_type}: {uname} (Srv #{sid})")
     await call.answer(f"🗑 Akun {uname} berhasil dihapus.", show_alert=True)
-    await cb_my_accounts(call)
+    await cb_my_accounts(call, state)
 
 @router.callback_query(F.data == "server_info_legacy")
 async def cb_server_info(call: CallbackQuery):
