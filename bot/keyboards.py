@@ -4,9 +4,9 @@ def main_menu_kb(is_admin: bool = False) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="🆓 Trial SSH", callback_data="trial_ssh"), InlineKeyboardButton(text="🆓 Trial Trojan", callback_data="trial_trojan")],
         [InlineKeyboardButton(text="🆓 Trial VLESS", callback_data="trial_vless"), InlineKeyboardButton(text="🆓 Trial VMess", callback_data="trial_vmess")],
+        [InlineKeyboardButton(text="🆓 Trial ZiVPN", callback_data="create:zivpn:1"), InlineKeyboardButton(text="🔐 Buat ZiVPN", callback_data="create:zivpn:0")],
         [InlineKeyboardButton(text="🔑 Buat SSH", callback_data="create_ssh"), InlineKeyboardButton(text="🔐 Buat Trojan", callback_data="create_xray:trojan")],
         [InlineKeyboardButton(text="⚡ Buat VLESS", callback_data="create_xray:vless"), InlineKeyboardButton(text="🚀 Buat VMess", callback_data="create_xray:vmess")],
-        [InlineKeyboardButton(text="🔏 Buat ZiVPN", callback_data="create:zivpn:0"), InlineKeyboardButton(text="🆓 Trial ZiVPN", callback_data="create:zivpn:1")],
         [InlineKeyboardButton(text="📋 Akun Saya", callback_data="my_accounts"), InlineKeyboardButton(text="🗑 Hapus Akun", callback_data="delete_menu")],
         [InlineKeyboardButton(text="ℹ️ Info Server & Aturan", callback_data="server_info")]
     ]

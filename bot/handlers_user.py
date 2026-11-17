@@ -267,7 +267,7 @@ async def cb_picked_server(call: CallbackQuery, state: FSMContext):
         await state.update_data(started_at=datetime.datetime.now().timestamp())
         await _safe_edit(
             call,
-            f"🔏 <b>Buat Akun ZiVPN — {html.escape(srv['name'])} ({html.escape(s_dom)})</b>\n\n"
+            f"🔐 <b>Buat Akun ZiVPN — {html.escape(srv['name'])} ({html.escape(s_dom)})</b>\n\n"
             f"Masukkan <b>Password / Key ZiVPN</b>:\n"
             f"• Hanya huruf &amp; angka (<code>a-z0-9</code>), 3 - 64 karakter\n"
             f"• Tanda <code>-</code> tidak didukung ZiVPN &amp; akan dihapus otomatis\n"
