@@ -1132,7 +1132,6 @@ async def send_account_topic_notification(
         thread_id = int(topic_id_str) if topic_id_str.isdigit() and int(topic_id_str) > 0 else None
 
         srv = await get_server_by_id(server_id)
-        s_name = srv["name"] if srv else f"Server #{server_id}"
         s_dom = srv["domain"] if srv else DOMAIN
 
         uid_s = str(tg_id)
@@ -1170,9 +1169,9 @@ async def send_account_topic_notification(
             f"🏷 <b>Kategori:</b> <code>{kat_badge}</code>\n"
             f"⚡ <b>Protokol:</b> <code>{proto_str}</code>\n"
             f"🔖 <b>Username:</b> <code>{html.escape(masked_uname)}</code>\n"
-            f"🌐 <b>Server VPS:</b> <code>{html.escape(s_name)} ({html.escape(s_dom)})</code>\n"
-            f"⏳ <b>Masa Aktif:</b> <code>{html.escape(dur_label)} (Exp: {html.escape(expired_at)})</code>\n"
+            f"🌐 <b>Server VPS:</b> <code>{html.escape(s_dom)}</code>\n"
             f"📶 <b>ISP Server:</b> <code>{isp_disp}</code>\n"
+            f"⏳ <b>Masa Aktif:</b> <code>{html.escape(dur_label)} (Exp: {html.escape(expired_at)})</code>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Ingin membuat akun VPN gratis &amp; cepat? Klik tombol di bawah!</i>"
         )
