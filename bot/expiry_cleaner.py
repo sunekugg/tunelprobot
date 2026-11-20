@@ -59,11 +59,6 @@ async def purge_accounts(
                 if now >= (created_dt + trial_td):
                     reason = f"Trial melebihi batas {trial_dur_str} (Dibuat: {created_at} WIB)"
 
-        elif mode == "trial_over":
-            if is_tr:
-                if (exp_dt and now >= exp_dt) or (created_dt and now >= (created_dt + trial_td)):
-                    reason = f"Trial melebihi batas {trial_dur_str}"
-
         elif mode == "reg_over_default":
             if not is_tr:
                 if exp_dt and now >= exp_dt:

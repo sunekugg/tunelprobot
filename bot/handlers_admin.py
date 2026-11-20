@@ -95,21 +95,18 @@ async def cb_adm_toggle_bot(call: CallbackQuery):
 async def cb_adm_purge_menu(call: CallbackQuery):
     if not await _guard_admin(call):
         return
-    tr_dur = await get_setting("trial_duration") or "30m"
     def_dur = await get_setting("default_duration") or "7d"
     max_dur = await get_setting("max_duration") or "30d"
 
     text = (
         "🧹 <b>Pembersihan Akun Expired &amp; Melebihi Batas Hari</b>\n\n"
-        f"• <b>Batas Durasi Trial Saat Ini:</b> <code>{tr_dur}</code>\n"
         f"• <b>Batas Hari Buat Akun Default:</b> <code>{def_dur}</code>\n"
         f"• <b>Batas Hari Maksimal:</b> <code>{max_dur}</code>\n"
         f"• <b>Waktu Server Sekarang:</b> <code>{now_wib().strftime('%Y-%m-%d %H:%M:%S WIB')}</code>\n\n"
         "Pilih metode pembersihan akun di bawah ini:"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⚡ Hapus Semua Akun Expired (Trial & Reguler)", callback_data="adm_purge_exec:expired")],
-        [InlineKeyboardButton(text=f"⏱ Hapus Trial Melebihi Batas ({tr_dur})", callback_data="adm_purge_exec:trial_over")],
+        [InlineKeyboardButton(text="⚡ Hapus Semua Akun Expired (Reguler)", callback_data="adm_purge_exec:expired")],
         [InlineKeyboardButton(text=f"📅 Hapus Akun Reguler Melebihi Batas Hari ({def_dur})", callback_data="adm_purge_exec:reg_over_default")],
         [InlineKeyboardButton(text="🔥 Sapu Bersih Semua yg Expired & Lewat Batas", callback_data="adm_purge_exec:all_over_limit")],
         [InlineKeyboardButton(text="✏️ Hapus Akun Melebihi Durasi/Hari Tertentu (Manual)", callback_data="adm_purge_custom")],
@@ -1311,7 +1308,6 @@ async def fsm_fjoin_invite(message: Message, state: FSMContext):
 @router.callback_query(F.data == "adm_settings")
 async def cb_adm_settings(call: CallbackQuery):
     def_dur = await get_setting("default_duration")
-    tr_dur = await get_setting("trial_duration")
     daily_lim = await get_setting("daily_create_limit")
     lim_win = await get_setting("create_limit_window") or "1d"
     g_lim = await get_setting("global_limit_ip")
@@ -1321,14 +1317,13 @@ async def cb_adm_settings(call: CallbackQuery):
         "🎨 <b>Pengaturan Global</b>\n\n"
         f"• <b>Batas Buat Akun User:</b> <code>{daily_lim}x per {lim_win}</code>\n"
         f"• <b>Masa Aktif Default:</b> <code>{def_dur}</code>\n"
-        f"• <b>Durasi Trial:</b> <code>{tr_dur}</code>\n"
         f"• <b>Limit IP Global:</b> <code>{'Unlimited' if g_lim=='0' else g_lim+' IP'}</code>\n"
         f"• <b>Kuota BW Default User:</b> <code>{'Unlimited' if def_q=='0' else def_q+' GB'}</code>\n"
         f"• <b>Speed Default User:</b> <code>{'Unlimited' if def_spd=='0' else def_spd+' Mbps'}</code>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📦 Batas Buat (Misal 1/7d)", callback_data="adm_set_key:daily_create_limit"), InlineKeyboardButton(text="🗓 Periode Reset (1d/3d/7d)", callback_data="adm_set_key:create_limit_window")],
-        [InlineKeyboardButton(text="⏳ Durasi Aktif Default", callback_data="adm_set_key:default_duration"), InlineKeyboardButton(text="⏱ Durasi Trial", callback_data="adm_set_key:trial_duration")],
+        [InlineKeyboardButton(text="⏳ Durasi Aktif Default", callback_data="adm_set_key:default_duration")],
         [InlineKeyboardButton(text="📊 Kuota BW Default (GB)", callback_data="adm_set_key:default_quota_gb"), InlineKeyboardButton(text="⚡ Speed Default (Mbps)", callback_data="adm_set_key:default_speed_mbps")],
         [InlineKeyboardButton(text="🔢 Limit IP Global", callback_data="adm_set_glim"), InlineKeyboardButton(text="🖼 Banner SSH (Auto-Sync)", callback_data="adm_set_key:ssh_banner")],
         [InlineKeyboardButton(text="🔔 Notifikasi Grup Topic (ON/OFF)", callback_data="adm_topic_notif")],
@@ -1417,8 +1412,6 @@ async def cb_adm_stats(call: CallbackQuery):
         u_cnt = (await (await db.execute("SELECT COUNT(*) FROM users")).fetchone())[0]
         ban_cnt = (await (await db.execute("SELECT COUNT(*) FROM users WHERE is_banned=1")).fetchone())[0]
         tot_acc = (await (await db.execute("SELECT COUNT(*) FROM accounts")).fetchone())[0]
-        tr_cnt = (await (await db.execute("SELECT COUNT(*) FROM accounts WHERE is_trial=1")).fetchone())[0]
-        reg_cnt = tot_acc - tr_cnt
         ssh_cnt = (await (await db.execute("SELECT COUNT(*) FROM accounts WHERE acc_type='ssh'")).fetchone())[0]
         trj_cnt = (await (await db.execute("SELECT COUNT(*) FROM accounts WHERE acc_type='trojan'")).fetchone())[0]
         vls_cnt = (await (await db.execute("SELECT COUNT(*) FROM accounts WHERE acc_type='vless'")).fetchone())[0]
@@ -1441,7 +1434,7 @@ async def cb_adm_stats(call: CallbackQuery):
         "📊 <b>Statistik Sistem, Akun &amp; Status Service</b>\n\n"
         "👥 <b>Data Pengguna &amp; Akun VPN:</b>\n"
         f"• <b>Total Pengguna Bot:</b> <code>{u_cnt} User</code> (Banned: <code>{ban_cnt}</code>)\n"
-        f"• <b>Total Semua Akun:</b> <code>{tot_acc} Akun</code> (Reguler: <code>{reg_cnt}</code> | Trial: <code>{tr_cnt}</code>)\n"
+        f"• <b>Total Semua Akun:</b> <code>{tot_acc} Akun</code>\n"
         f"• <b>Akun SSH:</b> <code>{ssh_cnt}</code> | <b>Trojan:</b> <code>{trj_cnt}</code>\n"
         f"• <b>Akun VLESS:</b> <code>{vls_cnt}</code> | <b>VMess:</b> <code>{vms_cnt}</code>\n"
         f"• <b>Akun Terkunci (Limit IP/Kuota):</b> <code>{lck_cnt}</code>\n\n"

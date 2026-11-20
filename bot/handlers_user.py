@@ -89,7 +89,7 @@ async def cb_verify_force_join(call: CallbackQuery, state: FSMContext):
 async def cb_srv_full_alert(call: CallbackQuery):
     await call.answer("⚠️ Server ini sudah mencapai batas maksimal user! Silakan pilih server lain.", show_alert=True)
 
-@router.callback_query(F.data.in_({"trial_ssh", "trial_trojan", "trial_vless", "trial_vmess", "create_ssh", "create_xray:trojan", "create_xray:vless", "create_xray:vmess", "create:zivpn:0", "create:zivpn:1"}))
+@router.callback_query(F.data.in_({"create_ssh", "create_xray:trojan", "create_xray:vless", "create_xray:vmess", "create:zivpn:0"}))
 async def cb_choose_server_first(call: CallbackQuery, state: FSMContext):
     uid = call.from_user.id
     allowed, deny_msg = await check_creation_allowed(uid)
@@ -177,69 +177,7 @@ async def cb_picked_server(call: CallbackQuery, state: FSMContext):
     s_dom = srv["domain"]
     await state.update_data(server_id=sid, server_domain=s_dom, server_name=srv["name"])
 
-    if act.startswith("trial_"):
-        proto = act.replace("trial_", "")
-        uid = call.from_user.id
-        allowed, deny_msg = await check_creation_allowed(uid)
-        if not allowed and not await is_user_admin(uid):
-            await call.answer(f"⚠️ {deny_msg}", show_alert=True)
-            return
-
-        await call.answer("⏳ Sedang membuat akun trial...")
-        trial_dur_str = await get_setting("trial_duration") or "30m"
-        rand_str = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
-        now_dt = now_wib()
-        created_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
-        td = parse_duration(trial_dur_str) or datetime.timedelta(minutes=30)
-        exp_str = (now_dt + td).strftime("%Y-%m-%d %H:%M:%S")
-        exp_disp = format_expired_display(exp_str, is_trial=1, trial_dur_str=trial_dur_str)
-        lim_ip = await get_effective_limit_ip(uid)
-
-        if proto in ("trojan", "vless", "vmess"):
-            uname = apply_prefix(f"trial-{rand_str}")
-            u_uuid = str(uuid.uuid4())
-            async with aiosqlite.connect(DB_PATH, timeout=15) as db:
-                await db.execute(
-                    "INSERT INTO accounts (tg_id, acc_type, username, password_or_uuid, expired_at, limit_ip, is_trial, created_at, server_id) VALUES (?, ?, ?, ?, ?, -1, 1, ?, ?)",
-                    (uid, proto, uname, u_uuid, exp_str, created_str, sid)
-                )
-                await db.commit()
-            await record_account_creation(uid, proto, uname, bot=call.bot)
-            await sync_xray_by_server(sid)
-            await generate_portable_backup_sh()
-            city, isp = await get_isp_info()
-            await add_log(uid, f"CREATE_TRIAL_{proto.upper()}", f"Remarks: {uname} (Srv #{sid}, Exp: {exp_str})")
-            asyncio.create_task(send_account_topic_notification(call.bot, uid, call.from_user.full_name, proto, uname, sid, exp_str, is_trial=True, dur_label=trial_dur_str))
-
-            if proto == "vless":
-                await send_multi_part_output(call.message, build_vless_messages(uname, city, isp, s_dom, u_uuid, lim_ip, exp_disp), replace_first=True)
-            elif proto == "vmess":
-                await send_multi_part_output(call.message, build_vmess_messages(uname, city, isp, s_dom, u_uuid, lim_ip, exp_disp), replace_first=True)
-            else:
-                text, kb = format_trojan_output(uname, city, isp, s_dom, u_uuid, lim_ip, exp_disp)
-                await _safe_edit(call, text, reply_markup=kb)
-        else:
-            uname_ssh = apply_prefix(f"trial{rand_str}")
-            pwd_ssh = "".join(random.choices(string.ascii_letters + string.digits, k=6))
-            if not await create_ssh_on_server(sid, uname_ssh, pwd_ssh):
-                await _safe_edit(call, "❌ Gagal membuat akun SSH pada server tujuan (Cek koneksi SSH di Panel Admin).", reply_markup=main_menu_kb(await is_user_admin(uid)))
-                return
-            async with aiosqlite.connect(DB_PATH, timeout=15) as db:
-                await db.execute(
-                    "INSERT INTO accounts (tg_id, acc_type, username, password_or_uuid, expired_at, limit_ip, is_trial, created_at, server_id) VALUES (?, 'ssh', ?, ?, ?, -1, 1, ?, ?)",
-                    (uid, uname_ssh, pwd_ssh, exp_str, created_str, sid)
-                )
-                await db.commit()
-            await record_account_creation(uid, "ssh", uname_ssh, bot=call.bot)
-            await generate_portable_backup_sh()
-            text, kb = format_ssh_output(s_dom, uname_ssh, pwd_ssh, lim_ip, exp_disp, show_pass=True)
-            await add_log(uid, "CREATE_TRIAL_SSH", f"User: {uname_ssh} (Srv #{sid}, Exp: {exp_str})")
-            asyncio.create_task(send_account_topic_notification(call.bot, uid, call.from_user.full_name, "ssh", uname_ssh, sid, exp_str, is_trial=True, dur_label=trial_dur_str))
-            await _safe_edit(call, text, reply_markup=kb)
-
-    elif act in ("create_zivpn_0", "create_zivpn_1"):
-        # catatan: act sudah di-replace(":", "_") dari callback 'create:zivpn:0/1'
-        is_trial_z = act.endswith("_1")
+    if act == "create_zivpn_0":
         uid = call.from_user.id
         allowed, deny_msg = await check_creation_allowed(uid)
         if not allowed and not await is_user_admin(uid):
@@ -248,21 +186,7 @@ async def cb_picked_server(call: CallbackQuery, state: FSMContext):
             await call.answer()
             return
 
-        if is_trial_z:
-            await call.answer("⏳ Sedang membuat akun trial ZiVPN...")
-            trial_dur_str = await get_setting("trial_duration") or "30m"
-            rand_str = "".join(random.choices(string.digits, k=5))
-            # Prefix di-join TANPA '-' (ZiVPN hanya menerima alfanumerik).
-            raw = (apply_prefix(f"trial{rand_str}") or f"trial{rand_str}").replace("-", "")
-            ok, res_txt = await _zivpn_finalize(
-                call.bot, call.message, call, uid, call.from_user.full_name,
-                sid, s_dom, srv["name"], raw, is_trial=1, dur_label=trial_dur_str
-            )
-            if not ok:
-                await _safe_edit(call, f"❌ {res_txt}", reply_markup=main_menu_kb(await is_user_admin(uid)))
-            return
-
-        # Reguler: minta 1 input berupa Password/Key ZiVPN.
+        # Minta 1 input berupa Password/Key ZiVPN.
         await state.set_state(CreateZivpnFSM.password)
         await state.update_data(started_at=datetime.datetime.now().timestamp())
         await _safe_edit(
