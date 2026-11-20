@@ -102,7 +102,6 @@ bot/
   states.py          FSM state
   ui_theme.py        tema tampilan (emoji, layout)
   ws-ssh.py          helper SSH over WebSocket
-  _slowdns_fmt.py    formatter SlowDNS
 scripts/
   components.sh      komponen installer
   ssh.sh / xray.sh / domain.sh   setup per-komponen
