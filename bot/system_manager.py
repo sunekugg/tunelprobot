@@ -1156,7 +1156,9 @@ async def send_account_topic_notification(
             "vmess": "VMESS (WS/gRPC/Upgrade)"
         }
         proto_str = proto_map.get(acc_type.lower(), acc_type.upper())
-        wib_now = now_wib().strftime("%Y-%m-%d %H:%M:%S WIB")
+        # Nama ISP server (dari cache get_isp_info, tanpa fetch berat)
+        _city, isp_name = await get_isp_info()
+        isp_disp = html.escape((isp_name or "Unknown ISP")[:40])
 
         me = await bot.get_me()
         bot_url = f"https://t.me/{me.username}"
@@ -1170,7 +1172,7 @@ async def send_account_topic_notification(
             f"🔖 <b>Username:</b> <code>{html.escape(masked_uname)}</code>\n"
             f"🌐 <b>Server VPS:</b> <code>{html.escape(s_name)} ({html.escape(s_dom)})</code>\n"
             f"⏳ <b>Masa Aktif:</b> <code>{html.escape(dur_label)} (Exp: {html.escape(expired_at)})</code>\n"
-            f"🕒 <b>Waktu Buat:</b> <code>{wib_now}</code>\n"
+            f"📶 <b>ISP Server:</b> <code>{isp_disp}</code>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Ingin membuat akun VPN gratis &amp; cepat? Klik tombol di bawah!</i>"
         )
