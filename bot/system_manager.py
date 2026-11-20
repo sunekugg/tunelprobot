@@ -1148,8 +1148,6 @@ async def send_account_topic_notification(
             f'<a href="https://t.me/{tg_uname.lstrip("@")}">{safe_name}</a>'
             if tg_uname else safe_name
         )
-        user_suffix = f" {html.escape(tg_uname)}" if tg_uname else ""
-
         kat_badge = "🔑 AKUN REGULER"
         proto_map = {
             "ssh": "SSH & Dropbear (WS/TLS)",
@@ -1166,7 +1164,7 @@ async def send_account_topic_notification(
         text = (
             "🔔 <b>NOTIFIKASI PEMBUATAN AKUN BARU</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 <b>Pengguna:</b> {user_link} (<code>{masked_uid}</code>) {user_suffix}\n"
+            f"👤 <b>Pengguna:</b> {user_link} (<code>{masked_uid}</code>)\n"
             f"🏷 <b>Kategori:</b> <code>{kat_badge}</code>\n"
             f"⚡ <b>Protokol:</b> <code>{proto_str}</code>\n"
             f"🔖 <b>Username:</b> <code>{html.escape(masked_uname)}</code>\n"
