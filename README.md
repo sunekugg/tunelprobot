@@ -100,6 +100,7 @@ bot/
   force_join.py      paksa join channel
   keyboards.py       papan tombol inline
   states.py          FSM state
+  menu_tracker.py    pelacak pesan bot & middleware sesi menu
   ui_theme.py        tema tampilan (emoji, layout)
   ws-ssh.py          helper SSH over WebSocket
 scripts/
