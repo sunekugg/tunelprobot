@@ -1137,16 +1137,15 @@ async def send_account_topic_notification(
         uid_s = str(tg_id)
         masked_uid = uid_s[:4] + "****" + uid_s[-2:] if len(uid_s) > 6 else uid_s
         masked_uname = (username[:4] + "***") if len(username) > 4 else (username[:2] + "***")
-        safe_name = html.escape((full_name or "User VPN")[:25])
-        # @username Telegram (kolom users.username). Tanpa '@' di DB -> tampil '-'
+        # @username Telegram (kolom users.username)
         tg_uname_raw = await get_user_tg_username(tg_id)
         tg_uname = ("@" + tg_uname_raw.lstrip("@")) if tg_uname_raw else ""
-        # Nama pengguna klikable ke t.me/<username>; tanpa @username -> nama polos
-        # (tg://user?id= TIDAK bekerja di dalam <a href>, jadi tak dipakai)
-        user_link = (
-            f'<a href="https://t.me/{tg_uname.lstrip("@")}">{safe_name}</a>'
-            if tg_uname else safe_name
-        )
+        # Baris Pengguna: @username saja (klikable). Fallback ke nama bila
+        # user tak punya @username. (tg://user?id= tak bekerja di <a href>)
+        if tg_uname:
+            user_disp = f'<a href="https://t.me/{tg_uname.lstrip("@")}">{html.escape(tg_uname)}</a>'
+        else:
+            user_disp = html.escape(full_name or f"User {masked_uid}")
         kat_badge = "🔑 AKUN REGULER"
         proto_map = {
             "ssh": "SSH & Dropbear (WS/TLS)",
@@ -1165,7 +1164,7 @@ async def send_account_topic_notification(
         text = (
             "🔔 <b>NOTIFIKASI PEMBUATAN AKUN BARU</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 <b>Pengguna:</b> {user_link} (<code>{masked_uid}</code>)\n"
+            f"👤 <b>Pengguna:</b> {user_disp}\n"
             f"🏷 <b>Kategori:</b> <code>{kat_badge}</code>\n"
             f"⚡ <b>Protokol:</b> <code>{proto_str}</code>\n"
             f"🔖 <b>Username:</b> <code>{html.escape(masked_uname)}</code>\n"
