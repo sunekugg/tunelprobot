@@ -277,6 +277,16 @@ async def ensure_user(tg_id: int, username: str = "", full_name: str = "") -> di
             row = await cur.fetchone()
             return dict(row)
 
+async def get_user_tg_username(tg_id: int) -> str:
+    """Ambil @username Telegram user dari table users (SELECT-only, aman)."""
+    try:
+        async with aiosqlite.connect(DB_PATH, timeout=15) as db:
+            async with db.execute("SELECT username FROM users WHERE tg_id = ?", (tg_id,)) as cur:
+                row = await cur.fetchone()
+        return (row[0] or "").strip() if row else ""
+    except Exception:
+        return ""
+
 async def is_user_admin(tg_id: int) -> bool:
     if tg_id == ADMIN_ID:
         return True

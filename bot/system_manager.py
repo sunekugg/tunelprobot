@@ -23,7 +23,7 @@ import aiohttp
 import psutil
 import aiosqlite
 from .config import DB_PATH, XRAY_CONFIG, XRAY_ACCESS_LOG, AUTO_BACKUP_SH, DOMAIN, ADMIN_ID, now_wib
-from .db import get_server_by_id, get_servers_with_usage, get_setting
+from .db import get_server_by_id, get_servers_with_usage, get_setting, get_user_tg_username
 
 _ISP_CACHE = {"city": "Jakarta", "isp": "Cloud ISP", "ts": 0}
 SSH_KEY_PRIV = "/root/.ssh/id_ed25519_vpn"
@@ -1147,6 +1147,9 @@ async def send_account_topic_notification(
         masked_uid = uid_s[:4] + "****" + uid_s[-2:] if len(uid_s) > 6 else uid_s
         masked_uname = (username[:4] + "***") if len(username) > 4 else (username[:2] + "***")
         safe_name = html.escape((full_name or "User VPN")[:25])
+        # @username Telegram (kolom users.username). Tanpa '@' di DB -> tampilkan '-'
+        tg_uname_raw = await get_user_tg_username(tg_id)
+        tg_uname = ("@" + tg_uname_raw.lstrip("@")) if tg_uname_raw else "-"
 
         kat_badge = "🔑 AKUN REGULER"
         proto_map = {
@@ -1165,6 +1168,7 @@ async def send_account_topic_notification(
             "🔔 <b>NOTIFIKASI PEMBUATAN AKUN BARU</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 <b>Pengguna:</b> <code>{safe_name}</code> (<code>{masked_uid}</code>)\n"
+            f"🔗 <b>Username TG:</b> <code>{html.escape(tg_uname)}</code>\n"
             f"🏷 <b>Kategori:</b> <code>{kat_badge}</code>\n"
             f"⚡ <b>Protokol:</b> <code>{proto_str}</code>\n"
             f"🔖 <b>Username:</b> <code>{html.escape(masked_uname)}</code>\n"
