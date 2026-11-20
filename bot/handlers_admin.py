@@ -1042,7 +1042,7 @@ async def fsm_adm_clim(message: Message, state: FSMContext):
 
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
         await db.execute(
-            "INSERT INTO accounts (tg_id, acc_type, username, password_or_uuid, expired_at, limit_ip, is_trial, created_at, server_id) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",
+            "INSERT INTO accounts (tg_id, acc_type, username, password_or_uuid, expired_at, limit_ip, created_at, server_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (uid, ctype, uname, secret, exp_str, lim_val, created_str, sid)
         )
         await db.commit()

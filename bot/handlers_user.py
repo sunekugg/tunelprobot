@@ -131,8 +131,7 @@ async def _zivpn_finalize(bot, chat_target, edit_call, uid: int, full_name: str,
 
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
         await db.execute(
-            "INSERT INTO accounts (tg_id, acc_type, username, password_or_uuid, expired_at, limit_ip, is_trial, created_at, server_id, quota_gb, speed_mbps) "
-            "VALUES (?, 'zivpn', ?, ?, ?, -1, 0, ?, ?, ?, ?)",
+            "INSERT INTO accounts (tg_id, acc_type, username, password_or_uuid, expired_at, limit_ip, created_at, server_id, quota_gb, speed_mbps) VALUES (?, 'zivpn', ?, ?, ?, -1, ?, ?, ?, ?)",
             (uid, passwd, passwd, exp_str, created_str, sid, def_q, def_spd)
         )
         await db.commit()
@@ -269,7 +268,7 @@ async def fsm_zivpn_password(message: Message, state: FSMContext):
     await state.clear()
     ok, res_txt = await _zivpn_finalize(
         message.bot, message, None, uid, message.from_user.full_name,
-        sid, s_dom, s_name, passwd, is_trial=0,
+        sid, s_dom, s_name, passwd,
         dur_label=await get_effective_duration(uid)
     )
     if not ok:
@@ -331,7 +330,7 @@ async def fsm_xray_remark(message: Message, state: FSMContext):
 
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
         await db.execute(
-            "INSERT INTO accounts (tg_id, acc_type, username, password_or_uuid, expired_at, limit_ip, is_trial, created_at, server_id, quota_gb, speed_mbps) VALUES (?, ?, ?, ?, ?, -1, 0, ?, ?, ?, ?)",
+            "INSERT INTO accounts (tg_id, acc_type, username, password_or_uuid, expired_at, limit_ip, created_at, server_id, quota_gb, speed_mbps) VALUES (?, ?, ?, ?, ?, -1, ?, ?, ?, ?)",
             (uid, proto, remark, u_uuid, exp_str, created_str, sid, def_q, def_spd)
         )
         await db.commit()
@@ -341,7 +340,7 @@ async def fsm_xray_remark(message: Message, state: FSMContext):
     await generate_portable_backup_sh()
     city, isp = await get_isp_info()
     await add_log(uid, f"CREATE_{proto.upper()}", f"Remarks: {remark} (Srv #{sid}, Buat: {created_str}, Exp: {exp_str})")
-    asyncio.create_task(send_account_topic_notification(message.bot, uid, message.from_user.full_name, proto, remark, sid, exp_str, is_trial=False, dur_label=dur_str))
+    asyncio.create_task(send_account_topic_notification(message.bot, uid, message.from_user.full_name, proto, remark, sid, exp_str, dur_label=dur_str))
 
     if proto == "vless":
         await send_multi_part_output(message, build_vless_messages(remark, city, isp, s_dom, u_uuid, lim_ip, exp_disp), replace_first=False)
@@ -442,7 +441,7 @@ async def cb_confirm_ssh(call: CallbackQuery, state: FSMContext):
 
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
         await db.execute(
-            "INSERT INTO accounts (tg_id, acc_type, username, password_or_uuid, expired_at, limit_ip, is_trial, created_at, server_id, quota_gb, speed_mbps) VALUES (?, 'ssh', ?, ?, ?, -1, 0, ?, ?, ?, ?)",
+            "INSERT INTO accounts (tg_id, acc_type, username, password_or_uuid, expired_at, limit_ip, created_at, server_id, quota_gb, speed_mbps) VALUES (?, 'ssh', ?, ?, ?, -1, ?, ?, ?, ?)",
             (uid, uname, pwd_val, exp_str, created_str, sid, def_q, def_spd)
         )
         await db.commit()
@@ -451,7 +450,7 @@ async def cb_confirm_ssh(call: CallbackQuery, state: FSMContext):
     await generate_portable_backup_sh()
     text, kb = format_ssh_output(s_dom, uname, pwd_val, lim_ip, exp_disp, show_pass=True)
     await add_log(uid, "CREATE_SSH", f"Username: {uname} (Srv #{sid}, Buat: {created_str}, Exp: {exp_str})")
-    asyncio.create_task(send_account_topic_notification(call.bot, uid, call.from_user.full_name, "ssh", uname, sid, exp_str, is_trial=False, dur_label=dur_str))
+    asyncio.create_task(send_account_topic_notification(call.bot, uid, call.from_user.full_name, "ssh", uname, sid, exp_str, dur_label=dur_str))
     await _safe_edit(call, text, reply_markup=kb)
     await call.answer("✅ Akun SSH berhasil dibuat!")
 
@@ -464,7 +463,7 @@ async def cb_view_acc(call: CallbackQuery):
 
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
         async with db.execute(
-            "SELECT tg_id, acc_type, username, password_or_uuid, expired_at, limit_ip, is_trial, COALESCE(server_id, 1) FROM accounts WHERE id = ?",
+            "SELECT tg_id, acc_type, username, password_or_uuid, expired_at, limit_ip, COALESCE(server_id, 1) FROM accounts WHERE id = ?",
             (acc_id,)
         ) as cur:
             row = await cur.fetchone()
@@ -473,7 +472,7 @@ async def cb_view_acc(call: CallbackQuery):
         await call.answer("Akun tidak ditemukan.", show_alert=True)
         return
 
-    owner_id, acc_type, uname, secret, exp_at, acc_lim, is_trial, sid = row
+    owner_id, acc_type, uname, secret, exp_at, acc_lim, sid = row
     srv = await get_server_by_id(sid)
     s_dom = srv["domain"] if srv else DOMAIN
     eff_lim = await get_effective_limit_ip(owner_id, acc_lim)
