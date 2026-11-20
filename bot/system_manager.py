@@ -1134,22 +1134,21 @@ async def send_account_topic_notification(
         srv = await get_server_by_id(server_id)
         s_name = srv["name"] if srv else f"Server #{server_id}"
         s_dom = srv["domain"] if srv else DOMAIN
-        used_u = srv.get("used_users", 0) if srv else 0
-        max_u = srv.get("max_users", 0) if srv else 0
-        cap_str = f"{used_u} / {'♾ Unlimited' if max_u == 0 else str(max_u)+' User'}"
-
-        def_q = await get_setting("default_quota_gb") or "0"
-        def_spd = await get_setting("default_speed_mbps") or "0"
-        q_str = "Unlimited" if float(def_q) <= 0 else f"{def_q} GB"
-        spd_str = "Unlimited" if int(def_spd) <= 0 else f"{def_spd} Mbps"
 
         uid_s = str(tg_id)
         masked_uid = uid_s[:4] + "****" + uid_s[-2:] if len(uid_s) > 6 else uid_s
         masked_uname = (username[:4] + "***") if len(username) > 4 else (username[:2] + "***")
         safe_name = html.escape((full_name or "User VPN")[:25])
-        # @username Telegram (kolom users.username). Tanpa '@' di DB -> tampilkan '-'
+        # @username Telegram (kolom users.username). Tanpa '@' di DB -> tampil '-'
         tg_uname_raw = await get_user_tg_username(tg_id)
-        tg_uname = ("@" + tg_uname_raw.lstrip("@")) if tg_uname_raw else "-"
+        tg_uname = ("@" + tg_uname_raw.lstrip("@")) if tg_uname_raw else ""
+        # Nama pengguna klikable ke t.me/<username>; tanpa @username -> nama polos
+        # (tg://user?id= TIDAK bekerja di dalam <a href>, jadi tak dipakai)
+        user_link = (
+            f'<a href="https://t.me/{tg_uname.lstrip("@")}">{safe_name}</a>'
+            if tg_uname else safe_name
+        )
+        user_suffix = f" {html.escape(tg_uname)}" if tg_uname else ""
 
         kat_badge = "🔑 AKUN REGULER"
         proto_map = {
@@ -1167,15 +1166,12 @@ async def send_account_topic_notification(
         text = (
             "🔔 <b>NOTIFIKASI PEMBUATAN AKUN BARU</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 <b>Pengguna:</b> <code>{safe_name}</code> (<code>{masked_uid}</code>)\n"
-            f"🔗 <b>Username TG:</b> <code>{html.escape(tg_uname)}</code>\n"
+            f"👤 <b>Pengguna:</b> {user_link} (<code>{masked_uid}</code>) {user_suffix}\n"
             f"🏷 <b>Kategori:</b> <code>{kat_badge}</code>\n"
             f"⚡ <b>Protokol:</b> <code>{proto_str}</code>\n"
             f"🔖 <b>Username:</b> <code>{html.escape(masked_uname)}</code>\n"
             f"🌐 <b>Server VPS:</b> <code>{html.escape(s_name)} ({html.escape(s_dom)})</code>\n"
-            f"📊 <b>Kapasitas Server:</b> <code>{cap_str}</code>\n"
             f"⏳ <b>Masa Aktif:</b> <code>{html.escape(dur_label)} (Exp: {html.escape(expired_at)})</code>\n"
-            f"📦 <b>Kuota / Speed:</b> <code>{q_str} / {spd_str}</code>\n"
             f"🕒 <b>Waktu Buat:</b> <code>{wib_now}</code>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Ingin membuat akun VPN gratis &amp; cepat? Klik tombol di bawah!</i>"
