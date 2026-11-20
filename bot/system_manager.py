@@ -87,26 +87,10 @@ def parse_duration(dur_str: str) -> datetime.timedelta | None:
         return datetime.timedelta(hours=val)
     return datetime.timedelta(days=val)
 
-def format_trial_duration_label(dur_str: str) -> str:
-    s = (dur_str or "30m").strip().lower()
-    m = re.match(r"^(\d+)\s*(m|min|mnt|menit|h|jam|hour|d|day|hari)?$", s)
-    if not m:
-        return "30 Minute"
-    val = int(m.group(1))
-    unit = m.group(2) or "m"
-    if unit in ("m", "min", "mnt", "menit"):
-        return f"{val} Minute"
-    if unit in ("h", "jam", "hour"):
-        return f"{val} Hour"
-    return f"{val} Day"
-
-def format_expired_display(expired_at: str, is_trial: int, trial_dur_str: str = "30m") -> str:
+def format_expired_display(expired_at: str) -> str:
     if not expired_at or expired_at.lower() == "unlimited":
         return "Unlimited"
-    clean_exp = expired_at.replace("WIB", "").strip()
-    if int(is_trial) == 1:
-        return f"{clean_exp} WIB ({format_trial_duration_label(trial_dur_str)})"
-    return f"{clean_exp} WIB"
+    return f"{expired_at.replace('WIB', '').strip()} WIB"
 
 def system_user_exists(username: str) -> bool:
     try:
@@ -1130,7 +1114,6 @@ async def send_account_topic_notification(
     username: str,
     server_id: int,
     expired_at: str,
-    is_trial: bool = False,
     dur_label: str = ""
 ):
     try:
@@ -1157,15 +1140,15 @@ async def send_account_topic_notification(
 
         def_q = await get_setting("default_quota_gb") or "0"
         def_spd = await get_setting("default_speed_mbps") or "0"
-        q_str = "Unlimited" if float(def_q) <= 0 or is_trial else f"{def_q} GB"
-        spd_str = "Unlimited" if int(def_spd) <= 0 or is_trial else f"{def_spd} Mbps"
+        q_str = "Unlimited" if float(def_q) <= 0 else f"{def_q} GB"
+        spd_str = "Unlimited" if int(def_spd) <= 0 else f"{def_spd} Mbps"
 
         uid_s = str(tg_id)
         masked_uid = uid_s[:4] + "****" + uid_s[-2:] if len(uid_s) > 6 else uid_s
         masked_uname = (username[:4] + "***") if len(username) > 4 else (username[:2] + "***")
         safe_name = html.escape((full_name or "User VPN")[:25])
 
-        kat_badge = "🆓 AKUN TRIAL" if is_trial else "🔑 AKUN REGULER"
+        kat_badge = "🔑 AKUN REGULER"
         proto_map = {
             "ssh": "SSH & Dropbear (WS/TLS)",
             "trojan": "TROJAN (WS/gRPC/Upgrade)",

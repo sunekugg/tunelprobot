@@ -106,18 +106,14 @@ async def cb_choose_server_first(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 async def _zivpn_finalize(bot, chat_target, edit_call, uid: int, full_name: str, sid: int,
-                          s_dom: str, s_name: str, passwd: str, is_trial: int,
+                          s_dom: str, s_name: str, passwd: str,
                           dur_label: str) -> tuple[bool, str]:
     """Buat akun ZiVPN end-to-end: tulis password ke server, simpan DB, kirim output.
     Return (ok, pesan_error). passwd SUDAH bersih (tanpa '-')."""
     now_dt = now_wib()
     created_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
-    if is_trial:
-        td = parse_duration(dur_label) or datetime.timedelta(minutes=30)
-        exp_str = (now_dt + td).strftime("%Y-%m-%d %H:%M:%S")
-    else:
-        td = parse_duration(await get_effective_duration(uid))
-        exp_str = (now_dt + td).strftime("%Y-%m-%d %H:%M:%S") if td else "Unlimited"
+    td = parse_duration(await get_effective_duration(uid))
+    exp_str = (now_dt + td).strftime("%Y-%m-%d %H:%M:%S") if td else "Unlimited"
     # Format tampilan khusus ZiVPN sesuai SPEK: '%d %B %Y %H:%M'
     if exp_str == "Unlimited":
         exp_disp = "Unlimited"
@@ -136,19 +132,17 @@ async def _zivpn_finalize(bot, chat_target, edit_call, uid: int, full_name: str,
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
         await db.execute(
             "INSERT INTO accounts (tg_id, acc_type, username, password_or_uuid, expired_at, limit_ip, is_trial, created_at, server_id, quota_gb, speed_mbps) "
-            "VALUES (?, 'zivpn', ?, ?, ?, -1, ?, ?, ?, ?, ?)",
-            (uid, passwd, passwd, exp_str, is_trial, created_str, sid, def_q, def_spd)
+            "VALUES (?, 'zivpn', ?, ?, ?, -1, 0, ?, ?, ?, ?)",
+            (uid, passwd, passwd, exp_str, created_str, sid, def_q, def_spd)
         )
         await db.commit()
 
     await record_account_creation(uid, "zivpn", passwd, bot=bot)
     await generate_portable_backup_sh()
     city, isp = await get_isp_info()
-    kind = "TRIAL_" if is_trial else ""
-    await add_log(uid, f"CREATE_{kind}ZIVPN", f"Pass: {passwd} (Srv #{sid}, Exp: {exp_str})")
+    await add_log(uid, "CREATE_ZIVPN", f"Pass: {passwd} (Srv #{sid}, Exp: {exp_str})")
     asyncio.create_task(send_account_topic_notification(
-        bot, uid, full_name, "zivpn", passwd, sid, exp_str,
-        is_trial=bool(is_trial), dur_label=dur_label
+        bot, uid, full_name, "zivpn", passwd, sid, exp_str, dur_label=dur_label
     ))
 
     text, kb = format_zivpn_output(passwd, s_dom, city, isp, exp_disp)
@@ -328,7 +322,7 @@ async def fsm_xray_remark(message: Message, state: FSMContext):
     now_dt = now_wib()
     created_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
     exp_str = (now_dt + td).strftime("%Y-%m-%d %H:%M:%S") if td else "Unlimited"
-    exp_disp = format_expired_display(exp_str, is_trial=0)
+    exp_disp = format_expired_display(exp_str)
     lim_ip = await get_effective_limit_ip(uid)
     # Speed default akun = speed batas VPS tujuan (per-server), fallback ke setting global.
     srv_row = await get_server_by_id(sid)
@@ -435,7 +429,7 @@ async def cb_confirm_ssh(call: CallbackQuery, state: FSMContext):
     now_dt = now_wib()
     created_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
     exp_str = (now_dt + td).strftime("%Y-%m-%d %H:%M:%S") if td else "Unlimited"
-    exp_disp = format_expired_display(exp_str, is_trial=0)
+    exp_disp = format_expired_display(exp_str)
     lim_ip = await get_effective_limit_ip(uid)
     # Speed default akun = speed batas VPS tujuan (per-server), fallback ke setting global.
     srv_row = await get_server_by_id(sid)
@@ -483,8 +477,7 @@ async def cb_view_acc(call: CallbackQuery):
     srv = await get_server_by_id(sid)
     s_dom = srv["domain"] if srv else DOMAIN
     eff_lim = await get_effective_limit_ip(owner_id, acc_lim)
-    trial_dur_str = await get_setting("trial_duration") or "30m"
-    exp_disp = format_expired_display(exp_at, is_trial=is_trial, trial_dur_str=trial_dur_str)
+    exp_disp = format_expired_display(exp_at)
     await call.answer()
 
     if acc_type == "vless":
@@ -499,13 +492,12 @@ async def cb_view_acc(call: CallbackQuery):
         await _safe_edit(call, text, reply_markup=kb)
     elif acc_type == "zivpn":
         city, isp = await get_isp_info()
-        trial_dur_str = await get_setting("trial_duration") or "30m"
-        exp_disp_z = format_expired_display(exp_at, is_trial=is_trial, trial_dur_str=trial_dur_str)
+        exp_disp_z = format_expired_display(exp_at)
         if exp_disp_z != "Unlimited":
             import datetime as _dt
             try:
                 _d = _dt.datetime.strptime(exp_disp_z.split(" (")[0].strip(), "%Y-%m-%d %H:%M:%S")
-                exp_disp_z = _d.strftime("%d %B %Y %H:%M") + (" (Trial)" if is_trial else "")
+                exp_disp_z = _d.strftime("%d %B %Y %H:%M")
             except Exception:
                 pass
         text, kb = format_zivpn_output(secret, s_dom, city, isp, exp_disp_z)
@@ -1042,7 +1034,7 @@ async def fsm_ext_bcustom_input(message: Message, state: FSMContext):
 
 # === FITUR MENU USER: LIST WILDCARD & DATA PEMAKAIAN SERVER ===
 from .system_manager import (
-    get_cluster_node_stats, get_ssh_active_sessions, get_xray_active_ips, format_trial_duration_label
+    get_cluster_node_stats, get_ssh_active_sessions, get_xray_active_ips
 )
 
 def _format_window_indo(win_str: str) -> str:
@@ -1118,7 +1110,7 @@ async def cb_my_accounts(call: CallbackQuery, state: FSMContext):
 
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
         async with db.execute(
-            "SELECT id, acc_type, username, expired_at, is_trial, is_locked, COALESCE(server_id, 1), COALESCE(quota_gb, 0), COALESCE(used_bytes, 0), COALESCE(speed_mbps, 0) FROM accounts WHERE tg_id = ? ORDER BY id DESC",
+            "SELECT id, acc_type, username, expired_at, is_locked, COALESCE(server_id, 1), COALESCE(quota_gb, 0), COALESCE(used_bytes, 0), COALESCE(speed_mbps, 0) FROM accounts WHERE tg_id = ? ORDER BY id DESC",
             (uid,)
         ) as cur:
             rows = await cur.fetchall()
@@ -1139,8 +1131,7 @@ async def cb_my_accounts(call: CallbackQuery, state: FSMContext):
 
     lines = ["📋 <b>Daftar Akun Aktif Anda:</b>\n"]
     buttons = []
-    for idx, (acc_id, acc_type, uname, exp, is_trial, is_locked, sid, q_gb, u_bytes, spd) in enumerate(rows, 1):
-        badge = "🆓 Trial" if is_trial else "🔑 Reguler"
+    for idx, (acc_id, acc_type, uname, exp, is_locked, sid, q_gb, u_bytes, spd) in enumerate(rows, 1):
         srv_name = srv_map.get(int(sid), f"Server #{sid}")
         ip_list = [ip for _, ip in ssh_online.get(uname, [])] if acc_type == "ssh" else list(xray_online.get(uname, set()))
         if is_locked == 1:
@@ -1153,7 +1144,7 @@ async def cb_my_accounts(call: CallbackQuery, state: FSMContext):
         q_txt = f"{format_bytes_human(u_bytes)} / {'♾' if float(q_gb or 0) <= 0 else str(q_gb)+' GB'}"
         spd_txt = "♾" if int(spd or 0) <= 0 else f"{spd} Mbps"
         lines.append(
-            f"{idx}. <b>{html.escape(uname)}</b> [<code>{acc_type.upper()}</code> - {badge}]\n"
+            f"{idx}. <b>{html.escape(uname)}</b> [<code>{acc_type.upper()}</code>]\n"
             f"   ├ Server: <code>{html.escape(srv_name)}</code> | Status: {st_txt}\n"
             f"   ├ Kuota: <code>{q_txt}</code> | Speed: <code>{spd_txt}</code>\n"
             f"   └ Exp: <code>{html.escape(exp)}</code>"
@@ -2383,8 +2374,6 @@ async def cb_server_info_enhanced(call: CallbackQuery):
     win_label = _format_window_indo(win_raw)
     reg_dur = await get_effective_duration(uid)
     reg_dur_label = "Unlimited" if reg_dur.lower() in ("0", "unlimited") else _format_window_indo(reg_dur)
-    trial_dur_raw = await get_setting("trial_duration") or "30m"
-    trial_dur_label = _format_window_indo(trial_dur_raw)
     def_q_gb = float(await get_setting("default_quota_gb") or 0)
     def_q_str = "Unlimited" if def_q_gb <= 0 else f"{def_q_gb:g} GB"
     def_spd = int(await get_setting("default_speed_mbps") or 0)
@@ -2480,7 +2469,7 @@ async def cb_server_info_enhanced(call: CallbackQuery):
         rules_block = (
             "╭─── 📜 <b>ATURAN &amp; KETENTUAN SERVER</b>\n"
             f"├─ • <b>Jatah Buat Akun:</b> <code>{q_rule_val}</code>\n"
-            f"├─ • <b>Masa Aktif:</b> <code>{reg_dur_label}</code> | <b>Trial:</b> <code>{trial_dur_label}</code>\n"
+            f"├─ • <b>Masa Aktif:</b> <code>{reg_dur_label}</code>\n"
             f"├─ • <b>Kuota &amp; Speed:</b> <code>{def_q_str}</code> | <code>{def_spd_str}</code>\n"
             f"├─ • <b>Batas Login:</b> <code>{lim_str}</code> (Auto-Lock <code>{lock_min}m</code>, Maks <code>{max_viol}x</code>)\n"
             "╰─ • <b>Larangan Keras:</b> <code>Dilarang Torrent, DDoS, Spamming &amp; Multi-Login!</code>"
@@ -2496,7 +2485,7 @@ async def cb_server_info_enhanced(call: CallbackQuery):
         rules_block = (
             "📜 <b>ATURAN &amp; KETENTUAN SERVER</b>\n"
             f"<blockquote expandable>• <b>Jatah Buat Akun:</b> <code>{q_rule_val}</code>\n"
-            f"• <b>Masa Aktif Reguler:</b> <code>{reg_dur_label}</code> | <b>Trial:</b> <code>{trial_dur_label}</code>\n"
+            f"• <b>Masa Aktif Reguler:</b> <code>{reg_dur_label}</code>\n"
             f"• <b>Kuota Bandwidth:</b> <code>{def_q_str}</code> | <b>Speed Limit:</b> <code>{def_spd_str}</code>\n"
             f"• <b>Batas Login (Limit IP):</b> <code>{lim_str}</code>\n"
             f"• <b>Sanksi Multi-Login:</b> <code>Auto-Lock {lock_min} Menit (Maks {max_viol}x Pelanggaran)</code>\n"
@@ -2513,7 +2502,7 @@ async def cb_server_info_enhanced(call: CallbackQuery):
         rules_block = (
             "📜 <b>[ ATURAN &amp; KETENTUAN SERVER ]</b>\n"
             f"• <b>Jatah Buat Akun:</b> <code>{q_rule_val}</code>\n"
-            f"• <b>Masa Aktif Reguler:</b> <code>{reg_dur_label}</code> | <b>Trial:</b> <code>{trial_dur_label}</code>\n"
+            f"• <b>Masa Aktif Reguler:</b> <code>{reg_dur_label}</code>\n"
             f"• <b>Kuota Bandwidth:</b> <code>{def_q_str}</code> | <b>Speed Limit:</b> <code>{def_spd_str}</code>\n"
             f"• <b>Batas Login (Limit IP):</b> <code>{lim_str}</code>\n"
             f"• <b>Sanksi Multi-Login:</b> <code>Auto-Lock {lock_min} Menit (Maks {max_viol}x Pelanggaran)</code>\n"

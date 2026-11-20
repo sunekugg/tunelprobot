@@ -9,7 +9,6 @@ DEFAULT_SETTINGS = {
     "bot_enabled": "1",
     "default_duration": "7d",
     "max_duration": "30d",
-    "trial_duration": "30m",
     "daily_create_limit": "2",
     "create_limit_window": "1d",
     "global_limit_ip": "2",
@@ -77,8 +76,6 @@ async def init_db():
             custom_quota_window TEXT DEFAULT '',
             custom_duration TEXT DEFAULT '',
             custom_limit_ip INTEGER DEFAULT -1,
-            trial_date TEXT DEFAULT '',
-            trial_count INTEGER DEFAULT 0,
             referred_by INTEGER DEFAULT 0,
             ref_rewarded INTEGER DEFAULT 0,
             bonus_create INTEGER DEFAULT 0,
@@ -93,7 +90,6 @@ async def init_db():
             password_or_uuid TEXT,
             expired_at TEXT,
             limit_ip INTEGER DEFAULT -1,
-            is_trial INTEGER DEFAULT 0,
             is_locked INTEGER DEFAULT 0,
             locked_until TEXT DEFAULT '',
             violations INTEGER DEFAULT 0,
@@ -375,13 +371,11 @@ async def try_consume_bonus_create(tg_id: int) -> bool:
 async def reset_all_creation_limits():
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
         await db.execute("DELETE FROM creation_history")
-        await db.execute("UPDATE users SET trial_count = 0, trial_date = ''")
         await db.commit()
 
 async def reset_user_creation_limit(tg_id: int):
     async with aiosqlite.connect(DB_PATH, timeout=15) as db:
         await db.execute("DELETE FROM creation_history WHERE tg_id = ?", (tg_id,))
-        await db.execute("UPDATE users SET trial_count = 0, trial_date = '' WHERE tg_id = ?", (tg_id,))
         await db.commit()
 
 # === REFERRAL OTOMATIS (bonus +1x create per teman yang buat akun) ===

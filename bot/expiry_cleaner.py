@@ -27,11 +27,9 @@ async def purge_accounts(
     custom_limit_str: str = ""
 ) -> tuple[int, list[str]]:
     now = now_wib()
-    trial_dur_str = await get_setting("trial_duration") or "30m"
     def_dur_str = await get_setting("default_duration") or "7d"
     max_dur_str = await get_setting("max_duration") or "30d"
 
-    trial_td = parse_duration(trial_dur_str) or datetime.timedelta(minutes=30)
     def_td = parse_duration(def_dur_str) or datetime.timedelta(days=7)
     max_td = parse_duration(max_dur_str) or datetime.timedelta(days=30)
     custom_td = parse_duration(custom_limit_str) if custom_limit_str else None
@@ -40,42 +38,34 @@ async def purge_accounts(
         await db.execute("PRAGMA journal_mode=WAL;")
         await db.execute("PRAGMA busy_timeout=10000;")
         async with db.execute(
-            "SELECT id, tg_id, acc_type, username, expired_at, created_at, is_trial, COALESCE(server_id, 1) FROM accounts"
+            "SELECT id, tg_id, acc_type, username, expired_at, created_at, COALESCE(server_id, 1) FROM accounts"
         ) as cur:
             rows = await cur.fetchall()
 
     to_delete = []
-    for acc_id, tg_id, acc_type, uname, exp_at, created_at, is_trial, srv_id in rows:
+    for acc_id, tg_id, acc_type, uname, exp_at, created_at, srv_id in rows:
         exp_dt = parse_wib_dt(exp_at)
         created_dt = parse_wib_dt(created_at)
-        is_tr = int(is_trial or 0) == 1
         reason = ""
 
         if mode == "expired":
-            if exp_dt is not None:
-                if now >= exp_dt:
-                    reason = f"Lewat waktu expired ({exp_at} WIB)"
-            elif is_tr and created_dt is not None:
-                if now >= (created_dt + trial_td):
-                    reason = f"Trial melebihi batas {trial_dur_str} (Dibuat: {created_at} WIB)"
+            if exp_dt is not None and now >= exp_dt:
+                reason = f"Lewat waktu expired ({exp_at} WIB)"
 
         elif mode == "reg_over_default":
-            if not is_tr:
-                if exp_dt and now >= exp_dt:
-                    reason = f"Sudah expired ({exp_at} WIB)"
-                elif created_dt and now >= (created_dt + def_td):
-                    reason = f"Umur akun melebihi batas {def_dur_str} sejak dibuat ({created_at} WIB)"
-                elif created_dt and exp_dt and (exp_dt - created_dt) > def_td:
-                    reason = f"Masa aktif ({exp_at}) melebihi batas hari default ({def_dur_str})"
+            if exp_dt and now >= exp_dt:
+                reason = f"Sudah expired ({exp_at} WIB)"
+            elif created_dt and now >= (created_dt + def_td):
+                reason = f"Umur akun melebihi batas {def_dur_str} sejak dibuat ({created_at} WIB)"
+            elif created_dt and exp_dt and (exp_dt - created_dt) > def_td:
+                reason = f"Masa aktif ({exp_at}) melebihi batas hari default ({def_dur_str})"
 
         elif mode == "all_over_limit":
             if exp_dt and now >= exp_dt:
                 reason = f"Lewat waktu expired ({exp_at} WIB)"
-            elif is_tr and created_dt and now >= (created_dt + trial_td):
-                reason = f"Trial melebihi batas {trial_dur_str}"
-            elif not is_tr and created_dt and now >= (created_dt + def_td):
+            elif created_dt and now >= (created_dt + def_td):
                 reason = f"Akun melebihi batas durasi {def_dur_str} sejak dibuat"
-            elif not is_tr and created_dt and exp_dt and (exp_dt - created_dt) > max_td:
+            elif created_dt and exp_dt and (exp_dt - created_dt) > max_td:
                 reason = f"Masa aktif melebihi batas maksimal ({max_dur_str})"
 
         elif mode == "custom" and custom_td:

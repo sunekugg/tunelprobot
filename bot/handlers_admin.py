@@ -898,7 +898,7 @@ async def fsm_adm_acc_edit_val(message: Message, state: FSMContext):
                     await _render_admin_home(message)
                     return
                 new_exp = (now_wib() + td).strftime("%Y-%m-%d %H:%M:%S")
-            await db.execute("UPDATE accounts SET expired_at = ?, is_trial = 0, notified_h1 = 0 WHERE id = ?", (new_exp, acc_id))
+            await db.execute("UPDATE accounts SET expired_at = ?, notified_h1 = 0 WHERE id = ?", (new_exp, acc_id))
         await db.commit()
 
     await generate_portable_backup_sh()
@@ -1020,7 +1020,7 @@ async def fsm_adm_clim(message: Message, state: FSMContext):
     now_dt = now_wib()
     created_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
     exp_str = (now_dt + td).strftime("%Y-%m-%d %H:%M:%S") if td else "Unlimited"
-    exp_disp = format_expired_display(exp_str, is_trial=0)
+    exp_disp = format_expired_display(exp_str)
     uid = message.from_user.id
 
     if ctype == "ssh":
@@ -1571,7 +1571,7 @@ async def cmd_get_or_set_topic_log(message: Message):
             f"• <b>Status Notifikasi:</b> <code>🟢 AKTIF (ON)</code>\n"
             f"• <b>Group Chat ID:</b> <code>{chat_id}</code>\n"
             f"• <b>Topic / Thread ID:</b> <code>{thread_id}</code>\n\n"
-            "Setiap ada user yang membuat akun Trial maupun Reguler, laporannya akan dikirim ke topic ini."
+            "Setiap ada user yang membuat akun baru, laporannya akan dikirim ke topic ini."
         )
     else:
         await message.reply(
@@ -1643,8 +1643,7 @@ async def cb_adm_topic_test(call: CallbackQuery):
         "test-akun",
         1,
         now_wib().strftime("%Y-%m-%d %H:%M:%S"),
-        is_trial=True,
-        dur_label="30m (TEST)"
+        dur_label="7d (TEST)"
     )
     await set_setting("notif_topic_enabled", prev_en)
     await call.answer("✅ Pesan tes telah dikirim ke Topic Grup! Silakan cek grup Anda.", show_alert=True)
