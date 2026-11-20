@@ -90,7 +90,7 @@ bot/
   config.py          env config, prefix username, zona waktu WIB
   db.py              SQLite async (akun, server, setting, log, referral)
   system_manager.py  engine: akun SSH/Xray/ZiVPN, remote multi-VPS, stack UDP, statistik
-  handlers_user.py   alur user: buat / trial / pindah server / kelola akun
+  handlers_user.py   alur user: buat / pindah server / kelola akun
   handlers_admin.py  panel admin: server, akun, kuota, speed, broadcast
   formatter.py       format output tiap protokol (format_zivpn_output, dll.)
   scheduler.py       tugas terjadwal: expired, kuota, laporan harian
@@ -162,7 +162,7 @@ Setelah install, jalankan di node baru:
 - Token, password admin, dan SSH key **tidak pernah** di-commit. `.gitignore`
   memblokir `config.env`, `*.db`, `.env`, `*.tar.gz`.
 - `config.env` di-`chmod 600`.
-- Trial (`is_trial=1`) selalu `ip_limit=0`; limit IP hanya untuk akun reguler.
+- Limit IP hanya berlaku untuk akun reguler.
 - Kuota ditegakkan scheduler: server dengan total pemakaian ≥ kuota otomatis
   di-set `is_active=0`.
 
