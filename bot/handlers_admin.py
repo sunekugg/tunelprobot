@@ -1017,7 +1017,7 @@ async def fsm_adm_cpass(message: Message, state: FSMContext):
     await state.set_state(AdminCustomAccountFSM.duration)
     await message.answer("Pilih Masa Aktif akun:", reply_markup=duration_picker_kb("adm_cdur", "admin_panel"))
 
-@router.callback_query(AdminCustomAccountFSM.username, F.data.startswith("adm_cdur:"))
+@router.callback_query(AdminCustomAccountFSM.duration, F.data.startswith("adm_cdur:"))
 async def fsm_adm_cdur_pick(call: CallbackQuery, state: FSMContext):
     val = (call.data or "").split(":", 1)[1]
     if val == "manual":

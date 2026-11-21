@@ -37,6 +37,17 @@ async def main():
         "set_accexp_7:0", "set_accexp_7:manual", "adm_acc_detail:7",
     ], cbs
 
+    # Tombol durasi muncul saat FSM berada di state `duration`, bukan `username`.
+    from aiogram.fsm.state import State as AiogramState
+    state_filter = next(
+        f.callback
+        for h in ha.router.callback_query.handlers
+        if h.callback == ha.fsm_adm_cdur_pick
+        for f in h.filters
+        if isinstance(f.callback, AiogramState)
+    )
+    assert state_filter.state == "AdminCustomAccountFSM:duration", state_filter.state
+
     await bot_db.init_db()
     async with aiosqlite.connect(bot_db.DB_PATH) as conn:
         await conn.execute(
