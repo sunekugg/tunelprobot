@@ -32,6 +32,16 @@ def admin_menu_kb(bot_enabled: bool = True) -> InlineKeyboardMarkup:
 def cancel_kb(back_cb: str = "menu_main") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Batal", callback_data=f"cancel_fsm:{back_cb}")]])
 
+def duration_picker_kb(prefix: str, back_cb: str) -> InlineKeyboardMarkup:
+    """Pilihan durasi akun untuk admin (1-30 hari + unlimited + manual)."""
+    rows = [
+        [InlineKeyboardButton(text=f"{n} hari", callback_data=f"{prefix}:{n}d") for n in (1, 2, 3)],
+        [InlineKeyboardButton(text=f"{n} hari", callback_data=f"{prefix}:{n}d") for n in (7, 14, 30)],
+        [InlineKeyboardButton(text="♾ Unlimited", callback_data=f"{prefix}:0"), InlineKeyboardButton(text="✏️ Manual", callback_data=f"{prefix}:manual")],
+        [InlineKeyboardButton(text="⬅️ Kembali", callback_data=back_cb)]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 def limit_ip_picker_kb(prefix: str, back_cb: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="1 IP", callback_data=f"{prefix}:1"), InlineKeyboardButton(text="2 IP", callback_data=f"{prefix}:2"), InlineKeyboardButton(text="3 IP", callback_data=f"{prefix}:3")],

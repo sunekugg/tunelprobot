@@ -13,6 +13,7 @@ import html
 import os
 import subprocess
 import uuid
+import types
 import aiosqlite
 from aiogram import Router, F
 from aiogram.filters import Command
@@ -24,7 +25,7 @@ from .db import (
     get_effective_daily_limit, get_effective_quota_window, parse_window_str, reset_all_creation_limits, reset_user_creation_limit, add_log,
     get_servers_with_usage, get_server_by_id
 )
-from .keyboards import admin_menu_kb, cancel_kb, limit_ip_picker_kb
+from .keyboards import admin_menu_kb, cancel_kb, limit_ip_picker_kb, duration_picker_kb
 from .force_join import invalidate_join_cache
 from .expiry_cleaner import purge_accounts
 from .formatter import (
@@ -859,13 +860,30 @@ async def cb_adm_acc_resetbw(call: CallbackQuery):
     call.data = f"adm_acc_detail:{acc_id}"
     await cb_adm_acc_detail(call)
 
+@router.callback_query(F.data == "adm_acc_exp")
 @router.callback_query(F.data.startswith("adm_acc_exp:"))
 async def cb_adm_acc_exp(call: CallbackQuery, state: FSMContext):
-    acc_id = int(call.data.split(":")[1])
+    parts = (call.data or "").split(":")
+    acc_id = int(parts[1]) if len(parts) > 1 else int((await state.get_data()).get("acc_id", 0))
     await state.set_state(AdminAccountEditFSM.value)
     await state.update_data(acc_id=acc_id, action="duration")
-    await _safe_edit(call, "⏳ Masukkan durasi masa aktif baru (contoh: <code>30m</code>, <code>1d</code>, <code>7d</code>, <code>30d</code>, atau <code>unlimited</code>):", reply_markup=cancel_kb("adm_accounts"))
+    await _safe_edit(call, "⏳ Pilih durasi masa aktif baru:", reply_markup=duration_picker_kb(f"set_accexp_{acc_id}", f"adm_acc_detail:{acc_id}"))
     await call.answer()
+
+@router.callback_query(F.data.startswith("set_accexp_"))
+async def cb_set_accexp(call: CallbackQuery, state: FSMContext):
+    left, val = (call.data or "").split(":", 1)
+    acc_id = int(left.replace("set_accexp_", ""))
+    if val == "manual":
+        await state.set_state(AdminAccountEditFSM.value)
+        await state.update_data(acc_id=acc_id, action="duration")
+        await _safe_edit(call, "⏳ Masukkan durasi masa aktif baru (contoh: <code>30m</code>, <code>1d</code>, <code>7d</code>, <code>30d</code>, atau <code>unlimited</code>):", reply_markup=cancel_kb("adm_accounts"))
+        await call.answer()
+        return
+    # Pill: 0 = Unlimited; lainnya "Nd" → terjemahkan ke teks yang dipahami parse_duration.
+    dur_str = "unlimited" if val == "0" else val
+    fake = types.SimpleNamespace(text=dur_str, from_user=call.from_user)
+    await fsm_adm_acc_edit_val(fake, state)
 
 @router.message(AdminAccountEditFSM.value)
 async def fsm_adm_acc_edit_val(message: Message, state: FSMContext):
@@ -987,7 +1005,7 @@ async def fsm_adm_cuser(message: Message, state: FSMContext):
         await message.answer("Masukkan Password SSH:", reply_markup=cancel_kb("admin_panel"))
     else:
         await state.set_state(AdminCustomAccountFSM.duration)
-        await message.answer("Masukkan Masa Aktif (contoh: <code>30m</code>, <code>1d</code>, <code>7d</code>, <code>30d</code>, atau <code>unlimited</code>):", reply_markup=cancel_kb("admin_panel"))
+        await message.answer("Pilih Masa Aktif akun:", reply_markup=duration_picker_kb("adm_cdur", "admin_panel"))
 
 @router.message(AdminCustomAccountFSM.password)
 async def fsm_adm_cpass(message: Message, state: FSMContext):
@@ -997,7 +1015,21 @@ async def fsm_adm_cpass(message: Message, state: FSMContext):
     except Exception:
         pass
     await state.set_state(AdminCustomAccountFSM.duration)
-    await message.answer("Masukkan Masa Aktif (contoh: <code>30m</code>, <code>1d</code>, <code>7d</code>, <code>30d</code>, atau <code>unlimited</code>):", reply_markup=cancel_kb("admin_panel"))
+    await message.answer("Pilih Masa Aktif akun:", reply_markup=duration_picker_kb("adm_cdur", "admin_panel"))
+
+@router.callback_query(AdminCustomAccountFSM.username, F.data.startswith("adm_cdur:"))
+async def fsm_adm_cdur_pick(call: CallbackQuery, state: FSMContext):
+    val = (call.data or "").split(":", 1)[1]
+    if val == "manual":
+        await state.set_state(AdminCustomAccountFSM.duration)
+        await _safe_edit(call, "Masukkan Masa Aktif Manual (contoh: <code>30m</code>, <code>1d</code>, <code>7d</code>, <code>30d</code>, atau <code>unlimited</code>):", reply_markup=cancel_kb("admin_panel"))
+        await call.answer()
+        return
+    dur_str = "unlimited" if val == "0" else val
+    await state.update_data(duration=dur_str)
+    await state.set_state(AdminCustomAccountFSM.limit_ip)
+    await _safe_edit(call, "Masukkan Limit IP (angka 1-100, atau <code>0</code> untuk Unlimited):", reply_markup=cancel_kb("admin_panel"))
+    await call.answer()
 
 @router.message(AdminCustomAccountFSM.duration)
 async def fsm_adm_cdur(message: Message, state: FSMContext):
