@@ -63,7 +63,7 @@ async def cb_create_duration(call: CallbackQuery, state: FSMContext):
         await call.answer()
         return
     dur_str = "unlimited" if val == "0" else val
-    await state.update_data(duration=dur_str)
+    await state.update_data(duration=dur_str, started_at=datetime.datetime.now().timestamp())
     data = await state.get_data()
     act = data.get("create_action", "")
     sid = int(data.get("server_id", 1))
@@ -104,7 +104,10 @@ async def fsm_create_duration_manual(message: Message, state: FSMContext):
     if not td and val not in ("0", "unlimited", "tanpa expired"):
         await message.answer("❌ Durasi tidak valid. Contoh: <code>2d</code>, <code>12h</code>, <code>unlimited</code>:", reply_markup=cancel_kb())
         return
-    await state.update_data(duration="unlimited" if val in ("0", "unlimited", "tanpa expired") else val)
+    await state.update_data(
+        duration="unlimited" if val in ("0", "unlimited", "tanpa expired") else val,
+        started_at=datetime.datetime.now().timestamp(),
+    )
     data = await state.get_data()
     act = data.get("create_action", "")
     # Lanjutkan ke langkah input berikutnya sesuai alur aslinya.

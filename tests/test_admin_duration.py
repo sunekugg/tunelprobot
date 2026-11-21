@@ -66,9 +66,15 @@ async def main():
             answer=_noop,
             message=None,
         )
-        await ctx.set_data({"create_action": "create_ssh", "server_id": 1})
+        await ctx.set_data({
+            "create_action": "create_ssh",
+            "server_id": 1,
+            "started_at": 0,  # regresi: durasi lama bikin step berikut timeout
+        })
         await hu.cb_create_duration(call, ctx)
-        assert (await ctx.get_data()).get("duration") == "2d"
+        after = await ctx.get_data()
+        assert after.get("duration") == "2d"
+        assert after.get("started_at", 0) > __import__("time").time() - 5, after
 
         # Non-admin ditolak.
         answers = []
