@@ -27,7 +27,7 @@ from .db import (
     try_register_referral, reward_referral_on_first_account, get_ref_stats,
     try_consume_bonus_create, check_creation_allowed, get_user_bonus_create,
 )
-from .keyboards import main_menu_kb, cancel_kb, server_picker_kb
+from .keyboards import main_menu_kb, cancel_kb, server_picker_kb, duration_picker_kb
 from .force_join import check_user_membership, invalidate_join_cache
 from .formatter import (
     format_trojan_output, format_ssh_output, format_zivpn_output,
@@ -42,6 +42,81 @@ from .system_manager import (
 from .states import CreateXrayFSM, CreateSSHFSM, CreateZivpnFSM, BugInjectFSM
 
 router = Router()
+
+# Durasi akun dipilih Admin via tombol di menu utama; user biasa pakai durasi efektif.
+async def _duration_choice_for(uid: int, state: FSMContext) -> str:
+    """Admin: simpan durasi di FSM saat pilih tombol. Non-admin: durasi efektif."""
+    data = await state.get_data()
+    if data.get("duration"):
+        return data["duration"]
+    return await get_effective_duration(uid)
+
+
+@router.callback_query(F.data.startswith("create_duration:"))
+async def cb_create_duration(call: CallbackQuery, state: FSMContext):
+    if not await is_user_admin(call.from_user.id):
+        await call.answer("⛔ Hanya Administrator!", show_alert=True)
+        return
+    _, val = (call.data or "").split(":", 1)
+    if val == "manual":
+        await _safe_edit(call, "⏳ Ketik durasi manual (contoh: <code>2d</code>, <code>12h</code>, <code>unlimited</code>):", reply_markup=cancel_kb())
+        await call.answer()
+        return
+    dur_str = "unlimited" if val == "0" else val
+    await state.update_data(duration=dur_str)
+    data = await state.get_data()
+    act = data.get("create_action", "")
+    sid = int(data.get("server_id", 1))
+    srv = await get_server_by_id(sid)
+    s_name = srv["name"] if srv else "Server"
+    s_dom = srv["domain"] if srv else DOMAIN
+    dur_lbl = "Unlimited" if dur_str == "unlimited" else dur_str
+    if act == "create_zivpn_0":
+        await state.set_state(CreateZivpnFSM.password)
+        text = (f"🔐 <b>Buat Akun ZiVPN — {html.escape(s_name)} ({html.escape(s_dom)})</b>\n\n"
+                f"⏳ Durasi: <code>{dur_lbl}</code>\n\n"
+                "Masukkan <b>Password / Key ZiVPN</b>:\n"
+                "• Hanya huruf & angka (a-z0-9), 3-64 karakter")
+    elif act == "create_ssh":
+        await state.set_state(CreateSSHFSM.username)
+        text = (f"🔑 <b>Buat Akun SSH — {html.escape(s_name)} ({html.escape(s_dom)})</b>\n\n"
+                f"⏳ Durasi: <code>{dur_lbl}</code>\n\n"
+                "Langkah 1/2: Masukkan <b>Username SSH</b> (a-z0-9, 3-16 karakter):")
+    else:
+        proto = (act or "").replace("create_xray_", "").upper() or "VLESS"
+        await state.set_state(CreateXrayFSM.remark)
+        text = (f"🔐 <b>Buat Akun {proto} — {html.escape(s_name)} ({html.escape(s_dom)})</b>\n\n"
+                f"⏳ Durasi: <code>{dur_lbl}</code>\n\n"
+                "Masukkan nama akun (<b>remarks</b>): huruf kecil & angka, 3-16 karakter:")
+    await _safe_edit(call, text, reply_markup=cancel_kb())
+    await call.answer("✅ Durasi dipilih.")
+
+
+@router.message(CreateZivpnFSM.duration)
+@router.message(CreateXrayFSM.duration)
+@router.message(CreateSSHFSM.duration)
+async def fsm_create_duration_manual(message: Message, state: FSMContext):
+    if not await is_user_admin(message.from_user.id):
+        await state.clear()
+        return
+    val = (message.text or "").strip().lower()
+    td = parse_duration(val)
+    if not td and val not in ("0", "unlimited", "tanpa expired"):
+        await message.answer("❌ Durasi tidak valid. Contoh: <code>2d</code>, <code>12h</code>, <code>unlimited</code>:", reply_markup=cancel_kb())
+        return
+    await state.update_data(duration="unlimited" if val in ("0", "unlimited", "tanpa expired") else val)
+    data = await state.get_data()
+    act = data.get("create_action", "")
+    # Lanjutkan ke langkah input berikutnya sesuai alur aslinya.
+    if act == "create_zivpn_0":
+        await state.set_state(CreateZivpnFSM.password)
+        await message.answer("Masukkan <b>Password / Key ZiVPN</b> (huruf & angka, 3-64 karakter):", reply_markup=cancel_kb())
+    elif act == "create_ssh":
+        await state.set_state(CreateSSHFSM.username)
+        await message.answer("Masukkan <b>Username SSH</b> (huruf kecil & angka, 3-16 karakter):", reply_markup=cancel_kb())
+    else:
+        await state.set_state(CreateXrayFSM.remark)
+        await message.answer("Masukkan <b>remarks</b> akun (huruf kecil & angka, 3-16 karakter):", reply_markup=cancel_kb())
 
 
 async def _build_user_header(tg_id: int) -> str:
@@ -107,12 +182,12 @@ async def cb_choose_server_first(call: CallbackQuery, state: FSMContext):
 
 async def _zivpn_finalize(bot, chat_target, edit_call, uid: int, full_name: str, sid: int,
                           s_dom: str, s_name: str, passwd: str,
-                          dur_label: str) -> tuple[bool, str]:
+                          dur_label: str, dur_override: str = "") -> tuple[bool, str]:
     """Buat akun ZiVPN end-to-end: tulis password ke server, simpan DB, kirim output.
     Return (ok, pesan_error). passwd SUDAH bersih (tanpa '-')."""
     now_dt = now_wib()
     created_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
-    td = parse_duration(await get_effective_duration(uid))
+    td = parse_duration(dur_override or await get_effective_duration(uid))
     exp_str = (now_dt + td).strftime("%Y-%m-%d %H:%M:%S") if td else "Unlimited"
     # Format tampilan khusus ZiVPN sesuai SPEK: '%d %B %Y %H:%M'
     if exp_str == "Unlimited":
@@ -168,7 +243,22 @@ async def cb_picked_server(call: CallbackQuery, state: FSMContext):
         return
 
     s_dom = srv["domain"]
-    await state.update_data(server_id=sid, server_domain=s_dom, server_name=srv["name"])
+    uid = call.from_user.id
+    await state.update_data(server_id=sid, server_domain=s_dom, server_name=srv["name"], create_action=act)
+    if await is_user_admin(uid):
+        if act == "create_zivpn_0":
+            await state.set_state(CreateZivpnFSM.duration)
+        elif act == "create_ssh":
+            await state.set_state(CreateSSHFSM.duration)
+        elif act.startswith("create_xray_"):
+            await state.set_state(CreateXrayFSM.duration)
+        await _safe_edit(
+            call,
+            "⏳ <b>Admin: pilih Masa Aktif akun</b>\n\nPilih durasi untuk akun yang akan dibuat:",
+            reply_markup=duration_picker_kb("create_duration", "menu_main"),
+        )
+        await call.answer()
+        return
 
     if act == "create_zivpn_0":
         uid = call.from_user.id
@@ -265,11 +355,12 @@ async def fsm_zivpn_password(message: Message, state: FSMContext):
         await message.answer(f"⚠️ {deny_msg}")
         return
 
+    chosen_dur = await _duration_choice_for(uid, state)
     await state.clear()
     ok, res_txt = await _zivpn_finalize(
         message.bot, message, None, uid, message.from_user.full_name,
         sid, s_dom, s_name, passwd,
-        dur_label=await get_effective_duration(uid)
+        dur_label=chosen_dur, dur_override=chosen_dur
     )
     if not ok:
         await message.answer(f"❌ {res_txt}", reply_markup=main_menu_kb(await is_user_admin(uid)))
@@ -314,9 +405,9 @@ async def fsm_xray_remark(message: Message, state: FSMContext):
         await message.answer(f"⚠️ {deny_msg}")
         return
 
+    dur_str = await _duration_choice_for(uid, state)
     await state.clear()
     u_uuid = str(uuid.uuid4())
-    dur_str = await get_effective_duration(uid)
     td = parse_duration(dur_str)
     now_dt = now_wib()
     created_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -394,7 +485,7 @@ async def fsm_ssh_password(message: Message, state: FSMContext):
     s_dom = data.get("server_domain", DOMAIN)
     s_name = data.get("server_name", "Server Utama")
     uid = message.from_user.id
-    dur_str = await get_effective_duration(uid)
+    dur_str = await _duration_choice_for(uid, state)
     lim_ip = await get_effective_limit_ip(uid)
     lim_str = "Unlimited" if lim_ip == 0 else str(lim_ip)
 
@@ -419,11 +510,12 @@ async def cb_confirm_ssh(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     await state.clear()
     uname, pwd_val = data["username"], data["password"]
+    chosen_dur = data.get("duration") or await get_effective_duration(call.from_user.id)
     sid = int(data.get("server_id", 1))
     s_dom = data.get("server_domain", DOMAIN)
     uid = call.from_user.id
 
-    dur_str = await get_effective_duration(uid)
+    dur_str = chosen_dur
     td = parse_duration(dur_str)
     now_dt = now_wib()
     created_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")

@@ -3,14 +3,17 @@ from aiogram.fsm.state import State, StatesGroup
 class CreateXrayFSM(StatesGroup):
     proto = State()
     remark = State()
+    duration = State()
 
 class CreateSSHFSM(StatesGroup):
     username = State()
     password = State()
+    duration = State()
     confirm = State()
 
 class CreateZivpnFSM(StatesGroup):
     password = State()
+    duration = State()
 
 class AdminCustomAccountFSM(StatesGroup):
     server_id = State()

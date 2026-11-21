@@ -1005,7 +1005,7 @@ async def fsm_adm_cuser(message: Message, state: FSMContext):
         await message.answer("Masukkan Password SSH:", reply_markup=cancel_kb("admin_panel"))
     else:
         await state.set_state(AdminCustomAccountFSM.duration)
-        await message.answer("Pilih Masa Aktif akun:", reply_markup=duration_picker_kb("adm_cdur", "admin_panel"))
+        await message.answer("Masukkan Masa Aktif (contoh: <code>30m</code>, <code>1d</code>, <code>7d</code>, <code>30d</code>, atau <code>unlimited</code>):", reply_markup=cancel_kb("admin_panel"))
 
 @router.message(AdminCustomAccountFSM.password)
 async def fsm_adm_cpass(message: Message, state: FSMContext):
@@ -1015,21 +1015,7 @@ async def fsm_adm_cpass(message: Message, state: FSMContext):
     except Exception:
         pass
     await state.set_state(AdminCustomAccountFSM.duration)
-    await message.answer("Pilih Masa Aktif akun:", reply_markup=duration_picker_kb("adm_cdur", "admin_panel"))
-
-@router.callback_query(AdminCustomAccountFSM.duration, F.data.startswith("adm_cdur:"))
-async def fsm_adm_cdur_pick(call: CallbackQuery, state: FSMContext):
-    val = (call.data or "").split(":", 1)[1]
-    if val == "manual":
-        await state.set_state(AdminCustomAccountFSM.duration)
-        await _safe_edit(call, "Masukkan Masa Aktif Manual (contoh: <code>30m</code>, <code>1d</code>, <code>7d</code>, <code>30d</code>, atau <code>unlimited</code>):", reply_markup=cancel_kb("admin_panel"))
-        await call.answer()
-        return
-    dur_str = "unlimited" if val == "0" else val
-    await state.update_data(duration=dur_str)
-    await state.set_state(AdminCustomAccountFSM.limit_ip)
-    await _safe_edit(call, "Masukkan Limit IP (angka 1-100, atau <code>0</code> untuk Unlimited):", reply_markup=cancel_kb("admin_panel"))
-    await call.answer()
+    await message.answer("Masukkan Masa Aktif (contoh: <code>30m</code>, <code>1d</code>, <code>7d</code>, <code>30d</code>, atau <code>unlimited</code>):", reply_markup=cancel_kb("admin_panel"))
 
 @router.message(AdminCustomAccountFSM.duration)
 async def fsm_adm_cdur(message: Message, state: FSMContext):
