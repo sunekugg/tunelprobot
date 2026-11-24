@@ -156,6 +156,60 @@ def _slowdns_pubkey() -> str:
     except Exception:
         return "-"
 
+
+# Label blok profil klien HTTP Custom (pola acuan /opt/a4n-slowdnshc/menu).
+HC_LABELS = {
+    "mode_ssh": "Mode SSH",
+    "type": "Tipe",
+    "dns": "DNS",
+    "ns": "NS",
+    "pubkey": "Public Key",
+    "host": "SSH Host:Port",
+    "mode": "Mode",
+}
+
+def _hc_tunnel_domain(domain: str) -> str:
+    """Domain tunnel yang disajikan vaydns: ns-<host>.
+    Ini sama dengan DOMAIN konfigurasi bila sudah diawali ns-."""
+    d = (domain or "").strip().lower().rstrip(".")
+    if not d:
+        return ""
+    return d if d.startswith("ns-") else f"ns-{d}"
+
+
+def _hc_ssh_host(domain: str) -> str:
+    """SSH host klien = <host> (bukan ns-*, bukan dns-sd.*)."""
+    d = (domain or "").strip().lower().rstrip(".")
+    if d.startswith("dns-sd."):
+        return d[7:]
+    if d.startswith("ns-"):
+        return d[3:]
+    return d
+
+
+HC_DNS_RESOLVER = "112.215.198.248"
+
+
+def format_hc_block(domain: str, user: str, pub_key: str) -> str:
+    """Blok profil klien SlowDNS HC persis pola acuan (menu a4n SlowdnsHC).
+    DNS memakai resolver ISP yang meneruskan lewat delegasi NS, bukan host VPS."""
+    pub_key = (pub_key or "").strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", pub_key):
+        pub_key = "-" if not pub_key else pub_key
+    host = _hc_ssh_host(domain)
+    tunnel = _hc_tunnel_domain(host or domain)
+    lines = [
+        "SlowdnsHC / HTTP Custom",
+        "Mode SSH      : Standard → SlowDNS",
+        "Tipe          : Otomatis",
+        f"DNS           : {HC_DNS_RESOLVER} | {host}:53",
+        f"NS            : {tunnel}",
+        f"Public Key    : {pub_key}",
+        f"SSH Host:Port : {host}",
+    ]
+    return "\n".join(lines)
+
+
 def format_ssh_output(domain: str, user: str, pwd: str, limit_ip: int, expired_display: str, show_pass: bool = True) -> tuple[str, InlineKeyboardMarkup]:
     d_esc, u_esc, e_esc = map(html.escape, (domain, user, expired_display))
     real_pwd = pwd if show_pass else "********"
@@ -168,6 +222,7 @@ def format_ssh_output(domain: str, user: str, pwd: str, limit_ip: int, expired_d
     line_ntls = f"{domain}:80@{user}:{real_pwd}"
     line_dns = f"{ns_host}:5300@{user}:{real_pwd}"
     ovpn_url = f"http://{domain}:81/myvpn-config.zip"
+    hc_block = format_hc_block(domain, user, pub_key)
 
     block_info = (
         f"Account Created Successfully\n------------------------------------\n"
@@ -190,6 +245,7 @@ def format_ssh_output(domain: str, user: str, pwd: str, limit_ip: int, expired_d
         f"<pre>{block_info}</pre>\n<pre>{html.escape(block_ports)}</pre>\n"
         f"<pre>{html.escape(line_tls)}</pre>\n<pre>{html.escape(line_ntls)}</pre>\n"
         f"<pre>{html.escape(line_dns)}</pre>\n"
+        f"<pre>{html.escape(hc_block)}</pre>\n"
         f"<pre>------------------------------------\n{html.escape(ovpn_url)}\n------------------------------------</pre>"
     )
     rows = []
