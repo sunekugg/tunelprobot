@@ -157,6 +157,21 @@ def _slowdns_pubkey() -> str:
         return "-"
 
 
+def _slowdns_record_type_hint() -> str:
+    """Record-type efektif server SlowDNS utk ditampilkan di profil klien.
+
+    Compat (-dnstt-compat) memaksa txt, jadi tak perlu dicantumkan (default
+    parser klien). Non-compat: baca dari system_manager biar konsisten dg unit.
+    """
+    try:
+        from . import system_manager as sm
+        if sm.SLOWDNS_COMPAT:
+            return "txt"
+        return sm.normalize_record_type(sm.SLOWDNS_RECORD_TYPE)
+    except Exception:
+        return "txt"
+
+
 # Label blok profil klien HTTP Custom (pola acuan /opt/a4n-slowdnshc/menu).
 HC_LABELS = {
     "mode_ssh": "Mode SSH",
@@ -190,14 +205,16 @@ def _hc_ssh_host(domain: str) -> str:
 HC_DNS_RESOLVER = "112.215.198.248"
 
 
-def format_hc_block(domain: str, user: str, pub_key: str) -> str:
+def format_hc_block(domain: str, user: str, pub_key: str, record_type: str = "") -> str:
     """Blok profil klien SlowDNS HC persis pola acuan (menu a4n SlowdnsHC).
-    DNS memakai resolver ISP yang meneruskan lewat delegasi NS, bukan host VPS."""
+    DNS memakai resolver ISP yang meneruskan lewat delegasi NS, bukan host VPS.
+    record_type ditampilkan bila server tidak jalan di -dnstt-compat (VayDNS)."""
     pub_key = (pub_key or "").strip()
     if not re.fullmatch(r"[0-9a-fA-F]{64}", pub_key):
         pub_key = "-" if not pub_key else pub_key
     host = _hc_ssh_host(domain)
     tunnel = _hc_tunnel_domain(host or domain)
+    rt = (record_type or "").strip().lower()
     lines = [
         "SlowdnsHC / HTTP Custom",
         "Mode SSH      : Standard → SlowDNS",
@@ -205,8 +222,10 @@ def format_hc_block(domain: str, user: str, pub_key: str) -> str:
         f"DNS           : {HC_DNS_RESOLVER} | {host}:53",
         f"NS            : {tunnel}",
         f"Public Key    : {pub_key}",
-        f"SSH Host:Port : {host}",
     ]
+    if rt and rt != "txt":
+        lines.append(f"Record Type    : {rt}")
+    lines.append(f"SSH Host:Port : {host}")
     return "\n".join(lines)
 
 
@@ -222,7 +241,10 @@ def format_ssh_output(domain: str, user: str, pwd: str, limit_ip: int, expired_d
     line_ntls = f"{domain}:80@{user}:{real_pwd}"
     line_dns = f"{ns_host}:5300@{user}:{real_pwd}"
     ovpn_url = f"http://{domain}:81/myvpn-config.zip"
-    hc_block = format_hc_block(domain, user, pub_key)
+    # Skill step 4: format server yang berubah tak boleh diam-diam — profil
+    # klien SlowDNS HC wajib menampilkan record-type server (bukan cuma txt).
+    hc_block = format_hc_block(domain, user, pub_key,
+                               record_type=_slowdns_record_type_hint())
 
     block_info = (
         f"Account Created Successfully\n------------------------------------\n"

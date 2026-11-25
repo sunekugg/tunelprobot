@@ -576,6 +576,56 @@ def check_service_status(srv: str) -> str:
 SLOWDNS_DIR = "/etc/slowdns"
 SLOWDNS_PUB = "/etc/slowdns/server.pub"
 SLOWDNS_KEY = "/etc/slowdns/server.key"
+# -dnstt-compat memaksa record-type=jadi TXT di VayDNS >=0.2.7 dan wire format
+# dnstt lama. Default: wire VayDNS (clientid 2) + record-type dari config.
+SLOWDNS_RECORD_TYPES = (  # dipakai binary vaydns-server (nama record DNS)
+    "txt", "null", "cname", "a", "aaaa", "mx", "ns", "srv", "caa")
+SLOWDNS_COMPAT = os.getenv("SLOWDNS_COMPAT", "0").strip().lower() in ("1", "true", "yes")
+SLOWDNS_CLIENTID_SIZE = os.getenv("SLOWDNS_CLIENTID_SIZE", "2").strip()
+
+# --- binary SlowDNS server: DUA interface berbeda, keypair saling tukar ---
+# vaydns-server : flag interface (-domain/-upstream/-record-type nama/-dnstt-compat)
+# slowdns-server: multi-record, DOMAIN & UPSTREAMADDR POSISIONAL, mode auto/1-6.
+#                 TIDAK punya -domain, -upstream, -clientid-size, -dnstt-compat, -v.
+SLOWDNS_BIN_VAYDNS = "/usr/local/bin/vaydns-server"
+SLOWDNS_BIN_MULTI = "/usr/local/bin/slowdns-server"
+# md5 binary multi-record dari commit installer (tak ada .sha256 di sumbernya).
+_SLOWDNS_MULTI_MD5 = "6e60e126dcb7b8cedb50c4350cfd8c35"
+# mode wire binary multi-record; "auto" = binary pilih sendiri.
+SLOWDNS_DNS_MODES = ("auto", "1", "2", "3", "4", "5", "6")
+
+
+def normalize_dns_mode(value: str) -> str:
+    """Mode wire binary multi-record. '2' sah; 'cname' bukan mode (itu milik vaydns)."""
+    m = (value or "").strip().lower()
+    if m not in SLOWDNS_DNS_MODES:
+        raise ValueError(f"dns mode harus salah satu dari: {', '.join(SLOWDNS_DNS_MODES)}")
+    return m
+
+
+SLOWDNS_DNS_MODE = normalize_dns_mode(os.getenv("SLOWDNS_DNS_MODE", "auto"))
+
+
+def detect_slowdns_binary() -> str:
+    """'slowdns' (multi-record, terbaru) bila ada, else 'vaydns'.
+
+    Binary multi-record dipilih dulu: ini build terbaru yang dipakai installer.
+    Fingerprint HANYA dari keberadaan file — jangan dari symlink/alias dnstt-server.
+    """
+    if os.path.exists(SLOWDNS_BIN_MULTI):
+        return "slowdns"
+    return "vaydns"
+
+
+def normalize_record_type(value: str) -> str:
+    rt = (value or "").strip().lower()
+    if rt not in SLOWDNS_RECORD_TYPES:
+        raise ValueError(f"record-type harus salah satu dari: {', '.join(SLOWDNS_RECORD_TYPES)}")
+    return rt
+
+
+SLOWDNS_RECORD_TYPE = normalize_record_type(os.getenv("SLOWDNS_RECORD_TYPE", "txt"))
+
 SLOWDNS_PORT = 5300
 UDPC_PORT = 36712
 UDPGW_PORT = 7300
@@ -636,14 +686,32 @@ def _slowdns_mux_unit() -> str:
 def _slowdns_unit(domain: str) -> str:
     """slowdns meneruskan stream TCP dekripsi DNS ke mux 127.0.0.1:10017,
     BUKAN langsung ke Dropbear :90. Mux memutuskan tujuan: SSH / VMess / VLESS /
-    Trojan (WS). -mtu 1232 ditulis eksplisit agar tak berubah antar rilis."""
+    Trojan (WS). -mtu 1232 ditulis eksplisit agar tak berubah antar rilis.
+
+    Dua binary, dua interface (keypair saling tukar — salah pilih = unit start
+    tapi tak melayani query):
+      - slowdns-server (multi-record, terbaru): DOMAIN & UPSTREAMADDR POSISIONAL,
+        -record-type auto/1-6. Tak ada -domain/-upstream/-clientid-size/-dnstt-compat.
+      - vaydns-server: -domain/-upstream, -record-type nama record, -dnstt-compat.
+    """
+    ns = f"ns-{domain}"
+    if detect_slowdns_binary() == "slowdns":
+        head = (f"{SLOWDNS_BIN_MULTI} -udp :{SLOWDNS_PORT} -privkey-file {SLOWDNS_KEY} "
+                f"-mtu 1232 -record-type {SLOWDNS_DNS_MODE} {ns} "
+                f"127.0.0.1:{SLOWDNS_MUX_PORT}")
+    else:
+        if SLOWDNS_COMPAT:
+            # compat memaksa record-type=txt di vaydns >=0.2.7 — jangan digabung.
+            wire = "-dnstt-compat"
+        else:
+            wire = f"-clientid-size {SLOWDNS_CLIENTID_SIZE} -record-type {SLOWDNS_RECORD_TYPE}"
+        head = (f"{SLOWDNS_BIN_VAYDNS} -udp :{SLOWDNS_PORT} -privkey-file {SLOWDNS_KEY} "
+                f"-mtu 1232 -domain {ns} -upstream 127.0.0.1:{SLOWDNS_MUX_PORT} {wire}")
     return (
         "[Unit]\nDescription=SlowDNS dnstt Server (Multi-Protokol via mux)\n"
         f"After=vpn-slowdns-mux.service\nWants=vpn-slowdns-mux.service\n\n"
         "[Service]\n"
-        f"ExecStart=/usr/local/bin/vaydns-server -udp :{SLOWDNS_PORT} -privkey-file {SLOWDNS_KEY} "
-        f"-mtu 1232 -domain ns-{domain} -upstream 127.0.0.1:{SLOWDNS_MUX_PORT} "
-        "-record-type txt -dnstt-compat\n"
+        f"ExecStart={head}\n"
         "Restart=on-failure\nRestartSec=3\n\n"
         "[Install]\nWantedBy=multi-user.target\n"
     )
@@ -712,9 +780,20 @@ def _write(path: str, content: str, mode: int = 0o644):
     os.chmod(path, mode)
 
 def _fetch_bin(name: str, urls: list[str], timeout: int = 120) -> bool:
-    """Unduh binary ke /usr/local/bin/<name>; sukses bila ELF valid."""
+    """Unduh binary ke /usr/local/bin/<name>; sukses bila ELF valid.
+
+    ELF yang sudah ada dianggap cukup. Untuk validasi lebih tegas (versi /
+    checksum), pakai install_vaydns_server atau _fetch_bin_opts(force=True).
+    """
+    return _fetch_bin_opts(name, urls, timeout=timeout)
+
+
+def _fetch_bin_opts(name: str, urls: list[str], timeout: int = 120,
+                    force: bool = False) -> bool:
+    """Unduh binary; force=True abaikan ELF yang sudah ada (untuk downgrade
+    build `dev` ke rilis resmi)."""
     dst = f"/usr/local/bin/{name}"
-    if os.path.exists(dst):
+    if not force and os.path.exists(dst):
         try:
             with open(dst, "rb") as f:
                 if f.read(4) == b"\x7fELF":
@@ -734,6 +813,100 @@ def _fetch_bin(name: str, urls: list[str], timeout: int = 120) -> bool:
                 pass
             os.remove(dst)
     return False
+
+
+# Checksum SHA256 resmi vaydns-server v0.2.8 (dari .sha256 di halaman release).
+_VAYDNS_SHA256 = {
+    "amd64": "2db606ab570743950ed5c67af2181199b7c619e5eb793bf6265e9a34729890d3",
+    "arm64": "8755e68cc7a0b725da78d811f90670c7042375ad5a9abef400bf6fc1c8af959b",
+}
+VAYDNS_VERSION = "0.2.8"
+
+
+def _md5_of(path: str) -> str:
+    try:
+        import hashlib
+        h = hashlib.md5()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return ""
+
+
+def _sha256_of(path: str) -> str:
+    try:
+        import hashlib
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return ""
+
+
+def _vaydns_version(bin_path: str = "/usr/local/bin/vaydns-server") -> str:
+    """Baca `-v` binary; `dev` berarti build mirror, bukan rilis bertag."""
+    rc, out = _sh(f"{shlex.quote(bin_path)} -v", timeout=20)
+    return (out or "").strip() if rc == 0 else ""
+
+
+def install_slowdns_multi_server(arch: str | None = None) -> tuple[bool, str]:
+    """Pasang slowdns-server MULTI-RECORD (build terbaru, TXT/NULL/CNAME/A/AAAA/NS/
+    MX/SRV/CAA otomatis) — binary ini pengganti vaydns-server di installer terbaru.
+
+    Sumber: bin/ di repo biner milik pemilik stack (installer resminya juga
+    mengambil dari sini). Verifikasi md5; tak ada .sha256 di sumber, jadi md5
+    dikunci dari commit installer yang memperkenalkan binary ini.
+    """
+    arch = arch or _arch()
+    binp = SLOWDNS_BIN_MULTI
+    if os.path.exists(binp) and _md5_of(binp) == _SLOWDNS_MULTI_MD5:
+        return True, "slowdns-server multi-record (sudah pas)"
+    url = (f"https://raw.githubusercontent.com/sunekugg/tunelv2/main/bin/"
+           f"slowdns-server-linux-{arch}")
+    if _fetch_bin_opts("slowdns-server", [url], force=True) and _md5_of(binp) == _SLOWDNS_MULTI_MD5:
+        # keypair dari vaydns tetap valid — keduanya pakai format key yang sama.
+        return True, "slowdns-server multi-record"
+    return False, "slowdns-server multi-record gagal diunduh / checksum beda"
+
+
+def install_vaydns_server(arch: str | None = None) -> tuple[bool, str]:
+    """Pasang vaydns-server RILIS RESMI (vaydns release v0.2.8), bukan mirror.
+
+    Mirror personal bisa menyajikan build `dev` yang lebih besar/newer dari
+    rilis bertag, sehingga flag semantics tak menentu. Unduh dari release
+    GitHub resmi, cek checksum, lalu cek `-v` == VAYDNS_VERSION.
+
+    Return (ok, keterangan).
+    """
+    arch = arch or _arch()
+    binp = "/usr/local/bin/vaydns-server"
+    expected = _VAYDNS_SHA256.get(arch)
+    if not expected:
+        return False, f"arsitektur VayDNS tidak didukung: {arch}"
+
+    def _matches() -> bool:
+        return (
+            os.path.exists(binp)
+            and _sha256_of(binp) == expected
+            and _vaydns_version(binp) == VAYDNS_VERSION
+        )
+
+    if _matches():
+        return True, f"vaydns-server v{VAYDNS_VERSION} (sudah pas)"
+
+    official = (f"https://github.com/net2share/vaydns/releases/download/"
+                f"v{VAYDNS_VERSION}/vaydns-server-linux-{arch}")
+    # Force: ELF lama mungkin build `dev` dari mirror — harus ditimpa.
+    if _fetch_bin_opts("vaydns-server", [official], force=True):
+        if _matches():
+            return True, f"vaydns-server v{VAYDNS_VERSION} (rilis resmi)"
+        ver = _vaydns_version(binp)
+        return False, f"checksum / versi binary tidak cocok: {ver or 'tak diketahui'}"
+    return False, "vaydns-server gagal diunduh"
 
 def _arch() -> str:
     m = (os.uname().machine or "").lower()
@@ -761,11 +934,8 @@ def install_udp_stack() -> str:
     lines = []
     _sh(f"mkdir -p {SLOWDNS_DIR} /etc/udp /etc/iptables")
     arch = _arch()
-    ok_v = _fetch_bin("vaydns-server", [
-        f"https://raw.githubusercontent.com/sunekugg/tunelv2/main/bin/vaydns-server-linux-{arch}",
-        f"https://github.com/net2share/vaydns/releases/download/v0.2.8/vaydns-server-linux-{arch}",
-    ])
-    lines.append(f"vaydns-server: {'OK' if ok_v else 'GAGAL unduh'}")
+    ok_v, vaydns_note = install_vaydns_server(arch)
+    lines.append(f"vaydns-server: {vaydns_note}")
     ok_g = _fetch_bin("udpgw", [
         f"https://raw.githubusercontent.com/sunekugg/tunelv2/main/bin/udpgw-linux-{arch}",
         "https://raw.githubusercontent.com/Midas-XYZ/tunnel/main/udpgw",

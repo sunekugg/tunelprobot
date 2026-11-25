@@ -11,15 +11,26 @@ os.environ.setdefault("BOT_TOKEN", "x")
 os.environ.setdefault("ADMIN_ID", "1")
 
 from bot import system_manager as sm  # noqa: E402
+from _sd_pin import pin_binary  # noqa: E402
 
-# --- 1. unit slowdns: -dnstt-compat, upstream = mux Multi-Protokol, :5300, ns- ---
-u = sm._slowdns_unit("contoh.com")
+# --- 1. unit slowdns: wire VayDNS native, upstream = mux Multi-Protokol, :5300, ns- ---
+# VayDNS >=0.2.7: -dnstt-compat memaksa record-type=txt dan mengabaikan
+# -record-type, jadi default TIDAK memakai compat (lihat references vaydns).
+with pin_binary(sm, "vaydns"):
+    u = sm._slowdns_unit("contoh.com")
+    sm.SLOWDNS_COMPAT = True
+    try:
+        compat_u = sm._slowdns_unit("contoh.com")
+    finally:
+        sm.SLOWDNS_COMPAT = False
+assert "-dnstt-compat" in compat_u and "-record-type" not in compat_u, compat_u
 assert ":5300" in u, u
 assert "-upstream 127.0.0.1:10017" in u, u
 assert "-mtu 1232" in u, u
-assert "-dnstt-compat" in u, u
+assert "-dnstt-compat" not in u, u
+assert f"-clientid-size {sm.SLOWDNS_CLIENTID_SIZE}" in u, u
+assert f"-record-type {sm.SLOWDNS_RECORD_TYPE}" in u, u
 assert "-domain ns-contoh.com" in u, u
-assert "-record-type txt" in u, u
 # mux Multi-Protokol wajib ada & slowdns bergantung padanya
 mu = sm._slowdns_mux_unit()
 assert "slowdns_mux.py" in mu, mu
