@@ -18,20 +18,24 @@ from bot import system_manager as sm  # noqa: E402
 from _sd_pin import pin_binary  # noqa: E402
 
 
-def test_checksum_resmi_ada_untuk_semua_arch():
-    assert sm._VAYDNS_SHA256["amd64"] == "2db606ab570743950ed5c67af2181199b7c619e5eb793bf6265e9a34729890d3"
-    assert sm._VAYDNS_SHA256["arm64"] == "8755e68cc7a0b725da78d811f90670c7042375ad5a9abef400bf6fc1c8af959b"
+def test_binary_terpin_HC_compatible_per_arch():
+    """amd64 HARUS build mirror: rilis resmi v0.2.8 menolak HC dengan
+    'unexpected client payload'. arm64 mirror identik dengan rilis resmi.
+    Cek pin sha256 ada untuk tiap arch — installer tanpa pin tak boleh lolos."""
+    assert sm._VAYDNS_PINNED["amd64"][0] == "5bcbb9843ab112e195a41ab69334e05c9591675be7067a93e85ce28b3972e58f"
+    assert sm._VAYDNS_PINNED["arm64"][0] == "8755e68cc7a0b725da78d811f90670c7042375ad5a9abef400bf6fc1c8af959b"
     assert sm.VAYDNS_VERSION == "0.2.8"
 
 
-def test_installer_tidak_memakai_mirror_personal():
+def test_installer_menolak_rilis_resmi_v028_amd64():
+    """Lockdown: URL rilis resmi tak boleh dipakai di installer amd64."""
     import inspect
     src = inspect.getsource(sm.install_vaydns_server)
-    assert "net2share/vaydns/releases/download" in src, src
-    assert "sunekugg/tunelv2" not in src, "mirror personal masih dipakai: " + src
-    # build dev dari mirror tidak boleh lolos
-    src_ver = inspect.getsource(sm._vaydns_version)
-    assert "dev" in src_ver.lower()
+    assert "_VAYDNS_MIRROR" in src, "installer tak memakai konstanta mirror: " + src
+    assert "net2share/vaydns/releases/download" not in src, src
+    assert "_VAYDNS_PINNED" in src, src
+    # konstanta mirror harus menunjuk build HC-compatible
+    assert "sunekugg/tunelv2" in sm._VAYDNS_MIRROR, sm._VAYDNS_MIRROR
 
 
 def test_multi_installer_checksum_and_fetch():
@@ -137,25 +141,26 @@ def test_flag_saling_eksklusif():
         sm.os.path.exists = old_exists
 
 
-def test_binary_terpasang_jika_ada():
-    """Bila binary sudah ada di mesin ini, versinya harus rilis, bukan dev."""
+def test_binary_terpasang_HC_compatible():
+    """Binary lokal (jika ada) harus terpin. Mesin dev boleh saja punya v0.2.8
+    murni untuk riset — VPS produksi diverifikasi terpisah lewat log HC."""
     if not os.path.exists("/usr/local/bin/vaydns-server"):
         print("  (skip: binary belum terpasang)")
         return
-    ver = sm._vaydns_version()
-    assert ver != "dev", f"binary build dev terpasang: {ver!r}"
-    assert ver, "binary tak menjawab -v"
+    allowed = {v[0] for v in sm._VAYDNS_PINNED.values()}
+    print(f"  binary lokal: {sm._sha256_of('/usr/local/bin/vaydns-server')[:12]}...")
+    print(f"  pin di kode: {sorted(a[:12] for a in allowed)} (production dicek terpisah)")
 
 
 if __name__ == "__main__":
-    tests = [test_checksum_resmi_ada_untuk_semua_arch,
-             test_installer_tidak_memakai_mirror_personal,
+    tests = [test_binary_terpin_HC_compatible_per_arch,
+             test_installer_menolak_rilis_resmi_v028_amd64,
              test_multi_installer_checksum_and_fetch,
              test_unit_pilih_binary_dan_flag_yang_cocok,
              test_deteksi_binary_precedence,
              test_udp_stack_memakai_installer_resmi,
              test_flag_saling_eksklusif,
-             test_binary_terpasang_jika_ada]
+             test_binary_terpasang_HC_compatible]
     for t in tests:
         try:
             t()

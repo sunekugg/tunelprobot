@@ -842,11 +842,23 @@ def _fetch_bin_opts(name: str, urls: list[str], timeout: int = 120,
     return False
 
 
-# Checksum SHA256 resmi vaydns-server v0.2.8 (dari .sha256 di halaman release).
-_VAYDNS_SHA256 = {
-    "amd64": "2db606ab570743950ed5c67af2181199b7c619e5eb793bf6265e9a34729890d3",
-    "arm64": "8755e68cc7a0b725da78d811f90670c7042375ad5a9abef400bf6fc1c8af959b",
+# Build vaydns-server yang WAJIB dipakai — dikunci per-arch lewat sha256.
+#
+# Alasan amd64 memakai build mirror, bukan rilis resmi v0.2.8: rilis resmi
+# menolak HTTP Custom v8.1.5. Di noise.go, NewServer menolak handshake klien
+# yang membawa payload ("unexpected client payload"); HC mengirim payload,
+# sehingga tunnel mati di handshake walau UDP wire sudah "session ready".
+# Build mirror melonggarkan cek itu dan tetap melayani vaydns-client resmi.
+# arm64 mirror identik dengan rilis resmi (sha256 sama), jadi aman.
+#
+# Saat ganti binary: verifikasi ulang dengan HC, jangan hanya dengan
+# vaydns-client — klien resmi tak pernah mengirim payload, jadi bug ini lolos.
+_VAYDNS_PINNED = {
+    "amd64": ("5bcbb9843ab112e195a41ab69334e05c9591675be7067a93e85ce28b3972e58f", "mirror-dev"),
+    "arm64": ("8755e68cc7a0b725da78d811f90670c7042375ad5a9abef400bf6fc1c8af959b", "resmi-v0.2.8"),
 }
+_VAYDNS_MIRROR = ("https://raw.githubusercontent.com/sunekugg/tunelv2/main/bin/"
+                  "vaydns-server-linux-{arch}")
 VAYDNS_VERSION = "0.2.8"
 
 
@@ -901,39 +913,30 @@ def install_slowdns_multi_server(arch: str | None = None) -> tuple[bool, str]:
 
 
 def install_vaydns_server(arch: str | None = None) -> tuple[bool, str]:
-    """Pasang vaydns-server RILIS RESMI (vaydns release v0.2.8), bukan mirror.
+    """Pasang build HC-compatible, dikunci sha256 per-arch.
 
-    Mirror personal bisa menyajikan build `dev` yang lebih besar/newer dari
-    rilis bertag, sehingga flag semantics tak menentu. Unduh dari release
-    GitHub resmi, cek checksum, lalu cek `-v` == VAYDNS_VERSION.
-
-    Return (ok, keterangan).
+    JANGAN mengganti amd64 ke rilis resmi v0.2.8: rilis resmi menolak
+    HTTP Custom v8.1.5 dengan "unexpected client payload" di Noise handshake.
+    Build mirror melonggarkan validasi handshake; klien vaydns resmi tetap
+    kompatibel. arm64 mirror identik dengan rilis resmi.
     """
     arch = arch or _arch()
     binp = "/usr/local/bin/vaydns-server"
-    expected = _VAYDNS_SHA256.get(arch)
-    if not expected:
+    pinned = _VAYDNS_PINNED.get(arch)
+    if not pinned:
         return False, f"arsitektur VayDNS tidak didukung: {arch}"
+    expected, flavor = pinned
 
-    def _matches() -> bool:
-        return (
-            os.path.exists(binp)
-            and _sha256_of(binp) == expected
-            and _vaydns_version(binp) == VAYDNS_VERSION
-        )
+    if os.path.exists(binp) and _sha256_of(binp) == expected:
+        return True, f"vaydns-server {flavor} (sudah pas)"
 
-    if _matches():
-        return True, f"vaydns-server v{VAYDNS_VERSION} (sudah pas)"
-
-    official = (f"https://github.com/net2share/vaydns/releases/download/"
-                f"v{VAYDNS_VERSION}/vaydns-server-linux-{arch}")
-    # Force: ELF lama mungkin build `dev` dari mirror — harus ditimpa.
-    if _fetch_bin_opts("vaydns-server", [official], force=True):
-        if _matches():
-            return True, f"vaydns-server v{VAYDNS_VERSION} (rilis resmi)"
-        ver = _vaydns_version(binp)
-        return False, f"checksum / versi binary tidak cocok: {ver or 'tak diketahui'}"
-    return False, "vaydns-server gagal diunduh"
+    # Atomic fetch supaya binary yang sedang dieksekusi tidak ETXTBSY.
+    url = _VAYDNS_MIRROR.format(arch=arch)
+    if _fetch_bin_opts("vaydns-server", [url], force=True):
+        if _sha256_of(binp) == expected:
+            return True, f"vaydns-server {flavor} (HC-compatible)"
+        return False, "checksum binary tidak cocok dengan pin HC-compatible"
+    return False, "vaydns-server HC-compatible gagal diunduh"
 
 def _arch() -> str:
     m = (os.uname().machine or "").lower()
