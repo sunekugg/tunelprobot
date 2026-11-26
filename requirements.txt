@@ -1,4 +1,10 @@
-aiogram>=3.10,<4
+# Pin ketat: tanpa pin, pip mengambil aiogram 3.34 + pydantic 2.14 yang
+# menabrak bug typing Python 3.11 ("TypeError: unhashable type: 'FailFast'"
+# saat import aiogram.types) — bot mati saat start di VPS baru.
+# Pasangan ini teruji produksi (VPS 103.155.224.145):
+aiogram==3.31.0
+pydantic==2.13.5
+pydantic-core==2.46.5
 aiosqlite>=0.20
 python-dotenv
 aiohttp
