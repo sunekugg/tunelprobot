@@ -791,7 +791,12 @@ def _fetch_bin(name: str, urls: list[str], timeout: int = 120) -> bool:
 def _fetch_bin_opts(name: str, urls: list[str], timeout: int = 120,
                     force: bool = False) -> bool:
     """Unduh binary; force=True abaikan ELF yang sudah ada (untuk downgrade
-    build `dev` ke rilis resmi)."""
+    build `dev` ke rilis resmi).
+
+    Unduh ke temp lalu `os.replace`: menulis langsung ke path binary yang
+    sedang jalan gagal dengan ETXTBSY ("Text file busy"). Rename atomik
+    menukar inode, jadi proses lama tetap jalan sampai di-restart.
+    """
     dst = f"/usr/local/bin/{name}"
     if not force and os.path.exists(dst):
         try:
@@ -801,17 +806,27 @@ def _fetch_bin_opts(name: str, urls: list[str], timeout: int = 120,
         except Exception:
             pass
         os.remove(dst)
+    tmp = f"{dst}.new.{os.getpid()}"
     for u in urls:
-        rc, _ = _sh(f"wget -qO {shlex.quote(dst)} {shlex.quote(u)}", timeout=timeout)
-        if os.path.exists(dst):
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+        _sh(f"wget -qO {shlex.quote(tmp)} {shlex.quote(u)}", timeout=timeout)
+        if os.path.exists(tmp):
             try:
-                with open(dst, "rb") as f:
+                with open(tmp, "rb") as f:
                     if f.read(4) == b"\x7fELF":
-                        os.chmod(dst, 0o755)
+                        os.chmod(tmp, 0o755)
+                        os.replace(tmp, dst)
                         return True
             except Exception:
                 pass
-            os.remove(dst)
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
     return False
 
 
