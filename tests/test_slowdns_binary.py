@@ -63,14 +63,23 @@ def test_multi_installer_checksum_and_fetch():
 
 
 def test_unit_pilih_binary_dan_flag_yang_cocok():
+    """Mode direct (default): multi-record bind IP publik :53 -> dropbear :90.
+    Mode legacy (mux): vaydns/multi ke :5300 -> mux :10017."""
+    saved_mode = sm.SLOWDNS_MODE
     old_exists = sm.os.path.exists
     try:
+        # --- direct (default instalasi baru) ---
+        sm.SLOWDNS_MODE = "direct"
+        sm.SLOWDNS_LISTEN_IP = "1.2.3.4"
         sm.os.path.exists = lambda p: p == sm.SLOWDNS_BIN_MULTI
-        multi = sm._slowdns_unit("contoh.com")
-        assert "slowdns-server -udp :5300" in multi, multi
-        assert "-record-type auto ns-contoh.com 127.0.0.1:10017" in multi, multi
-        assert "-domain " not in multi and "-dnstt-compat" not in multi, multi
+        direct = sm._slowdns_unit("contoh.com")
+        assert "slowdns-server -udp 1.2.3.4:53" in direct, direct
+        assert "-record-type auto ns-contoh.com 127.0.0.1:90" in direct, direct
+        assert "-domain " not in direct and "-dnstt-compat" not in direct, direct
+        assert "After=vpn-slowdns-mux" not in direct, direct
 
+        # --- legacy mux: vaydns ---
+        sm.SLOWDNS_MODE = "mux"
         sm.os.path.exists = lambda p: p == sm.SLOWDNS_BIN_VAYDNS
         sm.SLOWDNS_COMPAT = False
         native = sm._slowdns_unit("contoh.com")
@@ -82,6 +91,7 @@ def test_unit_pilih_binary_dan_flag_yang_cocok():
     finally:
         sm.os.path.exists = old_exists
         sm.SLOWDNS_COMPAT = False
+        sm.SLOWDNS_MODE = saved_mode
 
 
 def test_deteksi_binary_precedence():
@@ -124,8 +134,10 @@ def test_udp_stack_memakai_installer_resmi():
 def test_flag_saling_eksklusif():
     """-dnstt-compat dan -record-type tak boleh satu ExecStart (terverifikasi
     di binary v0.2.8: compat memaksa txt dan mengabaikan record-type)."""
+    saved_mode = sm.SLOWDNS_MODE
     old_exists = sm.os.path.exists
     try:
+        sm.SLOWDNS_MODE = "mux"
         sm.os.path.exists = lambda p: p == sm.SLOWDNS_BIN_VAYDNS
         for compat in (True, False):
             sm.SLOWDNS_COMPAT = compat

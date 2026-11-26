@@ -350,13 +350,22 @@ XRAY_ACCESS_LOG=/var/log/xray/access.log
 REPO_URL=$REPO_URL
 PREFIKS_USERNAME=sunek-
 TZ=Asia/Jakarta
+# SlowDNS: install otomatis jalan gaya VPS1 (multi-record :53 -> dropbear :90).
+# IP publik dideteksi otomatis oleh install_udp_stack(); override di sini jika perlu.
+SLOWDNS_MODE=direct
+SLOWDNS_UPSTREAM_PORT=90
 ENV
   chmod 600 "$DATA/config.env"
 fi
 
-# SlowDNS (VayDNS) + UDP-Custom + UDPGW :7300 — pasang SETELAH config.env
-# supaya DOMAIN (NS slowdns) & datanya benar. install_udp_stack() idempotent.
-log "=== [8b/9] Pasang stack UDP (SlowDNS 53/5300, UDP-Custom 1-65535, UDPGW 7300) ==="
+# Idempotent: VPS lama yg sdh punya config.env tapi belum punya kunci mode
+# harus tetap dapat default direct setelah upgrade installer.
+grep -q "^SLOWDNS_MODE=" "$DATA/config.env" || printf 'SLOWDNS_MODE=direct\n' >> "$DATA/config.env"
+grep -q "^SLOWDNS_UPSTREAM_PORT=" "$DATA/config.env" || printf 'SLOWDNS_UPSTREAM_PORT=90\n' >> "$DATA/config.env"
+
+# SlowDNS multi-record + UDP-Custom + UDPGW :7300 — pasang SETELAH config.env
+# supaya DOMAIN (NS slowdns), SLOWDNS_MODE & datanya benar. Idempotent.
+log "=== [8b/9] Pasang stack UDP (SlowDNS :53->:90, UDP-Custom 1-65535, UDPGW 7300) ==="
 UDP_RES="$(set -a; . "$DATA/config.env"; set +a; "$REPO/.venv/bin/python" -c \
   "import sys; sys.path.insert(0,'$REPO'); from bot.system_manager import install_udp_stack; print(install_udp_stack())" 2>&1)" \
   && log "stack UDP: $UDP_RES" || log "PERINGATAN: pasang stack UDP gagal — $UDP_RES"

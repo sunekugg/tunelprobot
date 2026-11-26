@@ -13,6 +13,10 @@ os.environ.setdefault("ADMIN_ID", "1")
 from bot import system_manager as sm  # noqa: E402
 from _sd_pin import pin_binary  # noqa: E402
 
+# Bagian ini menguji mode LEGACY (mux). Mode default instalasi baru = direct.
+_saved_mode = sm.SLOWDNS_MODE
+sm.SLOWDNS_MODE = "mux"
+
 # --- 1. unit slowdns: wire VayDNS native, upstream = mux Multi-Protokol, :5300, ns- ---
 # VayDNS >=0.2.7: -dnstt-compat memaksa record-type=txt dan mengabaikan
 # -record-type, jadi default TIDAK memakai compat (lihat references vaydns).

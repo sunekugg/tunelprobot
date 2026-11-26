@@ -582,6 +582,11 @@ SLOWDNS_RECORD_TYPES = (  # dipakai binary vaydns-server (nama record DNS)
     "txt", "null", "cname", "a", "aaaa", "mx", "ns", "srv", "caa")
 SLOWDNS_COMPAT = os.getenv("SLOWDNS_COMPAT", "0").strip().lower() in ("1", "true", "yes")
 SLOWDNS_CLIENTID_SIZE = os.getenv("SLOWDNS_CLIENTID_SIZE", "2").strip()
+# direct (default): slowdns-server multi-record bind IP publik :53 -> dropbear :90
+# (= konfigurasi VPS1 yang terbukti konek). mux = legacy vaydns :5300 + NAT.
+SLOWDNS_MODE = (os.getenv("SLOWDNS_MODE", "direct") or "direct").strip().lower()
+SLOWDNS_LISTEN_IP = (os.getenv("SLOWDNS_LISTEN_IP", "") or "").strip()
+SLOWDNS_UPSTREAM_PORT = (os.getenv("SLOWDNS_UPSTREAM_PORT", "90") or "90").strip()
 
 # --- binary SlowDNS server: DUA interface berbeda, keypair saling tukar ---
 # vaydns-server : flag interface (-domain/-upstream/-record-type nama/-dnstt-compat)
@@ -696,21 +701,32 @@ def _slowdns_mux_unit() -> str:
     )
 
 def _slowdns_unit(domain: str) -> str:
-    """slowdns meneruskan stream TCP dekripsi DNS ke mux 127.0.0.1:10017,
-    BUKAN langsung ke Dropbear :90. Mux memutuskan tujuan: SSH / VMess / VLESS /
-    Trojan (WS). -mtu 1232 ditulis eksplisit agar tak berubah antar rilis.
+    """Unit slowdns. Dua mode (SLOWDNS_MODE di config.env):
 
-    Dua binary, dua interface (keypair saling tukar — salah pilih = unit start
-    tapi tak melayani query):
-      - slowdns-server (multi-record, terbaru): DOMAIN & UPSTREAMADDR POSISIONAL,
-        -record-type auto/1-6. Tak ada -domain/-upstream/-clientid-size/-dnstt-compat.
-      - vaydns-server: -domain/-upstream, -record-type nama record, -dnstt-compat.
+    - direct (DEFAULT, gaya VPS1 yang terbukti konek): slowdns-server
+      multi-record bind IP publik :53 LANGSUNG, upstream dropbear :90.
+      Tanpa mux, tanpa NAT 53->5300. Keypair unik per VPS.
+    - mux (legacy): vaydns-server di :5300 + NAT 53->5300 + mux :10017.
     """
     ns = f"ns-{domain}"
-    if detect_slowdns_binary() == "slowdns":
+    direct = SLOWDNS_MODE == "direct"
+    if direct:
+        # Gaya VPS1 yang terbukti konek: bind IP publik :53, upstream dropbear :90.
+        # IP publik didapat dari config (SLOWDNS_LISTEN_IP) atau Fallback 0.0.0.0.
+        # 0.0.0.0 bentrok dgn systemd-resolved 127.0.0.53? TIDAK — 127.0.0.53
+        # itu alamat spesifik, tapi bind 0.0.0.0:53 menutupnya. Makanya
+        # lebih baik IP publik eksplisit (sama seperti VPS2).
+        listen = SLOWDNS_LISTEN_IP or "0.0.0.0"
+        head = (f"{SLOWDNS_BIN_MULTI} -udp {listen}:53 -privkey-file {SLOWDNS_KEY} "
+                f"-mtu 1232 -record-type {SLOWDNS_DNS_MODE} {ns} 127.0.0.1:{SLOWDNS_UPSTREAM_PORT}")
+        deps = "After=network.target\n\n"
+        desc = "SlowDNS Multi-Record (DNS :53 langsung -> Dropbear :90)"
+    elif detect_slowdns_binary() == "slowdns":
         head = (f"{SLOWDNS_BIN_MULTI} -udp :{SLOWDNS_PORT} -privkey-file {SLOWDNS_KEY} "
                 f"-mtu 1232 -record-type {SLOWDNS_DNS_MODE} {ns} "
                 f"127.0.0.1:{SLOWDNS_MUX_PORT}")
+        deps = "After=vpn-slowdns-mux.service\nWants=vpn-slowdns-mux.service\n\n"
+        desc = "SlowDNS dnstt Server (Multi-Protokol via mux)"
     else:
         if SLOWDNS_COMPAT:
             # compat memaksa record-type=txt di vaydns >=0.2.7 — jangan digabung.
@@ -719,9 +735,12 @@ def _slowdns_unit(domain: str) -> str:
             wire = f"-clientid-size {SLOWDNS_CLIENTID_SIZE} -record-type {SLOWDNS_RECORD_TYPE}"
         head = (f"{SLOWDNS_BIN_VAYDNS} -udp :{SLOWDNS_PORT} -privkey-file {SLOWDNS_KEY} "
                 f"-mtu 1232 -domain {ns} -upstream 127.0.0.1:{SLOWDNS_MUX_PORT} {wire}")
+        deps = "After=vpn-slowdns-mux.service\nWants=vpn-slowdns-mux.service\n\n"
+        desc = "SlowDNS VayDNS Server (Multi-Protokol via mux)"
     return (
-        "[Unit]\nDescription=SlowDNS dnstt Server (Multi-Protokol via mux)\n"
-        f"After=vpn-slowdns-mux.service\nWants=vpn-slowdns-mux.service\n\n"
+        "[Unit]\n"
+        f"Description={desc}\n"
+        f"{deps}"
         "[Service]\n"
         f"ExecStart={head}\n"
         "Restart=on-failure\nRestartSec=3\n\n"
@@ -775,9 +794,12 @@ def _iptables_script() -> str:
         f'iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport {ZIVPN_LISTEN_PORT} -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT} 2>/dev/null || iptables -t nat -I PREROUTING 1 -i "$IFACE" -p udp --dport {ZIVPN_LISTEN_PORT} -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT}\n'
         f'iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT} 2>/dev/null || iptables -t nat -I PREROUTING 1 -i "$IFACE" -p udp --dport 6000:19999 -j REDIRECT --to-ports {ZIVPN_LISTEN_PORT}\n'
         f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport {SLOWDNS_PORT} -j ACCEPT\n'
-        f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 53 -j REDIRECT --to-ports {SLOWDNS_PORT}\n'
         f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport {UDPGW_PORT} -j ACCEPT\n'
         f'iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 1:65535 -j REDIRECT --to-ports {UDPC_PORT}\n'
+        # mode direct: :53 diterima langsung (server bind :53), bukan REDIRECT.
+        # RULE ini WAJIB di ATAS catch-all 1:65535 (udp-custom akan menelan :53).
+        f'iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 53 -j ACCEPT 2>/dev/null || '
+        f'iptables -t nat -I PREROUTING 1 -i "$IFACE" -p udp --dport 53 -j ACCEPT\n'
         f"for P in 53 {SLOWDNS_PORT} {UDPC_PORT} {UDPGW_PORT} {ZIVPN_LISTEN_PORT} 6000:19999; do\n"
         "  iptables -C INPUT -p udp --dport $P -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p udp --dport $P -j ACCEPT\n"
         "done\n"
@@ -992,9 +1014,17 @@ def install_udp_stack() -> str:
     if ok_v:
         _sh("ln -sf /usr/local/bin/vaydns-server /usr/local/bin/dnstt-server")
 
-    # key SlowDNS hanya dibuat sekali — regenerate lewat tombol panel
+    # Mode direct butuh slowdns-server multi-record — pastikan terpasang.
+    if SLOWDNS_MODE == "direct":
+        ok_m, m_note = install_slowdns_multi_server(arch)
+        lines.append(f"slowdns-server (multi-record): {m_note}")
+        ok_v = ok_m  # unit direct tidak jalan tanpa binary ini
+
+    # key SlowDNS hanya dibuat sekali — regenerate lewat tombol panel.
+    # Mode direct memakai binary multi-record utk -gen-key (interface sama).
+    gen_bin = SLOWDNS_BIN_MULTI if SLOWDNS_MODE == "direct" else SLOWDNS_BIN_VAYDNS
     if ok_v and not os.path.exists(SLOWDNS_PUB):
-        _sh(f"/usr/local/bin/vaydns-server -gen-key -privkey-file {SLOWDNS_KEY} "
+        _sh(f"{gen_bin} -gen-key -privkey-file {SLOWDNS_KEY} "
             f"-pubkey-file {SLOWDNS_PUB}")
         if os.path.exists(SLOWDNS_KEY):
             os.chmod(SLOWDNS_KEY, 0o600)
@@ -1028,10 +1058,33 @@ def install_udp_stack() -> str:
                "Restart=always\nRestartSec=3\nLimitNOFILE=65535\n\n"
                "[Install]\nWantedBy=multi-user.target\n")
         lines.append("zivpn config+service: OK")
-    # Mux Multi-Protokol: wajib terpasang sebelum slowdns dianggap siap.
+    # Mux Multi-Protokol: wajib di mode mux/legacy. Mode direct pakai dropbear :90
+    # langsung (tanpa mux) — tapi tetap dipasang agar panel kompatibel.
     ok_mux = _install_slowdns_mux()
     lines.append(f"slowdns mux: {'OK' if ok_mux else 'GAGAL'}")
     _write("/etc/systemd/system/vpn-slowdns-mux.service", _slowdns_mux_unit())
+
+    # Mode direct: tentukan IP publik utk bind :53 (SLOWDNS_LISTEN_IP menang).
+    global SLOWDNS_LISTEN_IP
+    if SLOWDNS_MODE == "direct":
+        listen_ip = SLOWDNS_LISTEN_IP
+        if not listen_ip:
+            rc_ip, ip_out = _sh("ip -4 addr show $(ip route get 1.1.1.1 2>/dev/null "
+                                "| awk '{print $5; exit}') 2>/dev/null | "
+                                "awk '/inet /{print $2}' | cut -d/ -f1 | head -1")
+            cand = ip_out.strip().splitlines()[0].strip() if rc_ip == 0 and ip_out.strip() else ""
+            if not cand:
+                _rc, cand = _sh("hostname -I 2>/dev/null | awk '{print $1}'")
+                cand = cand.strip()
+            if cand:
+                listen_ip = cand
+        if listen_ip:
+            os.environ["SLOWDNS_LISTEN_IP"] = listen_ip
+            SLOWDNS_LISTEN_IP = listen_ip
+            lines.append(f"listen IP: {listen_ip}")
+        else:
+            lines.append("listen IP: TIDAK KETEMU (fallback 0.0.0.0)")
+
     _write("/etc/systemd/system/slowdns.service", _slowdns_unit(DOMAIN))
     _write("/etc/systemd/system/udp-custom.service", _UDP_CUSTOM_UNIT)
     _write("/etc/systemd/system/udpgw.service", _UDPGW_UNIT)
@@ -1055,9 +1108,9 @@ def install_udp_stack() -> str:
     _sh("systemctl daemon-reload")
     _sh("/etc/iptables/apply-slowdns-udp.sh")
     svcs = []
-    if ok_mux:
-        # mux duluan — slowdns.service After/Wants-nya, dan tanpa mux tak ada
-        # protokol yang tersambung dari jalur DNS.
+    if ok_mux and SLOWDNS_MODE != "direct":
+        # mode mux/legacy: mux duluan — slowdns.service After/Wants-nya.
+        # mode direct: mux tak dipakai (slowdns langsung ke dropbear :90).
         svcs.append("vpn-slowdns-mux")
     if ok_v:
         svcs.append("slowdns")
