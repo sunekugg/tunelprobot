@@ -80,6 +80,36 @@ def test_unit_pilih_binary_dan_flag_yang_cocok():
         sm.SLOWDNS_COMPAT = False
 
 
+def test_deteksi_binary_precedence():
+    """Kehadiran file tak boleh menentukan wire. Compat harus mengunci vaydns
+    (multi-record tak punya -dnstt-compat), SLOWDNS_BINARY menimpa."""
+    old_env, old_compat = os.getenv("SLOWDNS_BINARY", ""), sm.SLOWDNS_COMPAT
+    real = sm.os.path.exists
+    try:
+        sm.os.path.exists = lambda p: p == sm.SLOWDNS_BIN_MULTI  # keduanya "ada"
+        sm.SLOWDNS_COMPAT = True
+        os.environ.pop("SLOWDNS_BINARY", None)
+        assert sm.detect_slowdns_binary() == "vaydns", \
+            "compat=1 tapi multi-record terpilih: klien dnstt lama akan putus"
+
+        os.environ["SLOWDNS_BINARY"] = "slowdns"
+        assert sm.detect_slowdns_binary() == "slowdns", "SLOWDNS_BINARY tak menimpa"
+
+        os.environ.pop("SLOWDNS_BINARY", None)
+        sm.SLOWDNS_COMPAT = False
+        assert sm.detect_slowdns_binary() == "slowdns", "multi-record (sudah dipasang)"
+
+        sm.os.path.exists = lambda p: p == sm.SLOWDNS_BIN_VAYDNS
+        assert sm.detect_slowdns_binary() == "vaydns", "fallback vaydns"
+    finally:
+        sm.os.path.exists = real
+        sm.SLOWDNS_COMPAT = old_compat
+        if old_env:
+            os.environ["SLOWDNS_BINARY"] = old_env
+        else:
+            os.environ.pop("SLOWDNS_BINARY", None)
+
+
 def test_udp_stack_memakai_installer_resmi():
     import inspect
     src = inspect.getsource(sm.install_udp_stack)
@@ -122,6 +152,7 @@ if __name__ == "__main__":
              test_installer_tidak_memakai_mirror_personal,
              test_multi_installer_checksum_and_fetch,
              test_unit_pilih_binary_dan_flag_yang_cocok,
+             test_deteksi_binary_precedence,
              test_udp_stack_memakai_installer_resmi,
              test_flag_saling_eksklusif,
              test_binary_terpasang_jika_ada]

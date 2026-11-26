@@ -607,11 +607,23 @@ SLOWDNS_DNS_MODE = normalize_dns_mode(os.getenv("SLOWDNS_DNS_MODE", "auto"))
 
 
 def detect_slowdns_binary() -> str:
-    """'slowdns' (multi-record, terbaru) bila ada, else 'vaydns'.
+    """Binary mana yang dipakai unit: 'slowdns' (multi-record) atau 'vaydns'.
 
-    Binary multi-record dipilih dulu: ini build terbaru yang dipakai installer.
-    Fingerprint HANYA dari keberadaan file — jangan dari symlink/alias dnstt-server.
+    Kehadiran file TIDAK menentukan wire: multi-record tak punya -dnstt-compat,
+    jadi server dnstt lama yang di-upgrade otomatis ke multi-record akan memutus
+    semua klien existing. Pilihan berurutan:
+      1. SLOWDNS_BINARY=slowdns|vaydns di config.env (eksplisit)
+      2. SLOWDNS_COMPAT=1 -> wajib vaydns (compat hanya ada di vaydns)
+      3. slowdns-server terpasang -> multi-record (build terbaru)
+      4. vaydns-server
     """
+    forced = (os.getenv("SLOWDNS_BINARY", "") or "").strip().lower()
+    if forced in ("slowdns", "multi", "multi-record"):
+        return "slowdns"
+    if forced == "vaydns":
+        return "vaydns"
+    if SLOWDNS_COMPAT:
+        return "vaydns"
     if os.path.exists(SLOWDNS_BIN_MULTI):
         return "slowdns"
     return "vaydns"
